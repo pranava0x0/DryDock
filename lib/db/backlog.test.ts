@@ -69,6 +69,36 @@ describe("backlog CRUD", () => {
     expect(getBacklogItemByExternalId("nope")).toBeNull();
   });
 
+  it("honors an explicit created_at when rebuilding history from Apple Notes", () => {
+    // The Apple Notes pull passes through a parsed `· added YYYY-MM-DD`
+    // timestamp so a wipe-and-resync preserves the user's history
+    // instead of stamping everything with today's date.
+    const ts = Math.floor(Date.UTC(2026, 0, 15) / 1000);
+    const item = createBacklogItem({
+      title: "historical",
+      source: "apple-notes",
+      external_id: "hist",
+      created_at: ts,
+    });
+    expect(item.created_at).toBe(ts);
+    // updated_at gets the same value so the row reads as historical
+    // rather than "modified today" — important for the dashboard's
+    // sort-by-recency.
+    expect(item.updated_at).toBe(ts);
+  });
+
+  it("ignores a non-finite created_at and falls back to unixepoch()", () => {
+    const before = Math.floor(Date.now() / 1000);
+    // Number.NaN typechecks as `number` so callers can leak garbage
+    // through optional-pass-through patterns — the helper must guard
+    // for that rather than store NaN.
+    const item = createBacklogItem({
+      title: "nan",
+      created_at: Number.NaN,
+    });
+    expect(item.created_at).toBeGreaterThanOrEqual(before);
+  });
+
   it("project SET NULL on delete keeps the backlog item", () => {
     const p = createProject({ name: "P", path: "/tmp/p" });
     const item = createBacklogItem({ title: "x", project_id: p.id });

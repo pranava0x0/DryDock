@@ -37,6 +37,13 @@ export interface NewBacklogInput {
   priority?: number;
   source?: BacklogSource;
   external_id?: string | null;
+  /**
+   * Optional Unix-seconds creation timestamp. Used by the Apple Notes
+   * sync to preserve `· added YYYY-MM-DD` history when rebuilding a
+   * wiped DB from the note. When omitted, SQLite stamps `created_at`
+   * via the `unixepoch()` default.
+   */
+  created_at?: number;
 }
 
 export interface UpdateBacklogInput {
@@ -108,20 +115,45 @@ export function getBacklogItemByExternalId(
 export function createBacklogItem(input: NewBacklogInput): BacklogItem {
   const db = getDb();
   const id = nanoid();
-  db.prepare(
-    `INSERT INTO backlog_items
-       (id, title, description, project_id, status, priority, source, external_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    input.title,
-    input.description ?? null,
-    input.project_id ?? null,
-    input.status ?? "idea",
-    input.priority ?? 0,
-    input.source ?? "manual",
-    input.external_id ?? null,
-  );
+  // When the caller provides a created_at (e.g. Apple Notes sync
+  // rebuilding a wiped DB from `· added YYYY-MM-DD` suffixes), insert
+  // it explicitly so updated_at gets the same value — the row should
+  // read as historically created, not as "modified today." Without the
+  // override, SQLite's unixepoch() defaults stamp both columns with
+  // today's time.
+  if (typeof input.created_at === "number" && Number.isFinite(input.created_at)) {
+    db.prepare(
+      `INSERT INTO backlog_items
+         (id, title, description, project_id, status, priority, source, external_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      input.title,
+      input.description ?? null,
+      input.project_id ?? null,
+      input.status ?? "idea",
+      input.priority ?? 0,
+      input.source ?? "manual",
+      input.external_id ?? null,
+      input.created_at,
+      input.created_at,
+    );
+  } else {
+    db.prepare(
+      `INSERT INTO backlog_items
+         (id, title, description, project_id, status, priority, source, external_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      input.title,
+      input.description ?? null,
+      input.project_id ?? null,
+      input.status ?? "idea",
+      input.priority ?? 0,
+      input.source ?? "manual",
+      input.external_id ?? null,
+    );
+  }
   const created = getBacklogItem(id);
   if (!created) {
     throw new Error(`createBacklogItem: row not found after insert (id=${id})`);

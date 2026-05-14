@@ -40,6 +40,13 @@ export interface AppleNoteLine {
   done: boolean;
   /** The user's free-form text minus the leading marker. */
   text: string;
+  /**
+   * Unix-seconds creation timestamp extracted from the ` · added YYYY-MM-DD`
+   * suffix the renderer appends. Null when the line had no parseable
+   * suffix — for those, the orchestrator falls back to `unixepoch()` on
+   * INSERT (the user typed the line natively and never had a date).
+   */
+  createdAt: number | null;
 }
 
 /**
@@ -58,12 +65,38 @@ export function lineId(text: string): string {
  * Trailing ` · added YYYY-MM-DD` suffix the renderer appends so the user
  * can see when each item entered the backlog. Stripped before computing
  * `externalId` so the line key stays stable across re-renders (the
- * timestamp text would otherwise change the hash on every push).
+ * timestamp text would otherwise change the hash on every push). The
+ * captured date also lets a DB rebuild from a note preserve the original
+ * `created_at` — without that, every wipe-and-resync would stamp items
+ * with today's date and the user's "added" history would silently reset.
  */
-const ADDED_SUFFIX_RE = / · added \d{4}-\d{2}-\d{2}$/;
+const ADDED_SUFFIX_RE = / · added (\d{4})-(\d{2})-(\d{2})$/;
 
-function stripAddedSuffix(text: string): string {
-  return text.replace(ADDED_SUFFIX_RE, "").trim();
+interface ParsedSuffix {
+  stripped: string;
+  createdAt: number | null;
+}
+
+function parseAddedSuffix(text: string): ParsedSuffix {
+  const match = text.match(ADDED_SUFFIX_RE);
+  if (!match) return { stripped: text.trim(), createdAt: null };
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  // Local-time noon — mirror formatAddedDate's choice of timezone and
+  // avoid DST boundary surprises that midnight could trip.
+  const d = new Date(year, month - 1, day, 12, 0, 0, 0);
+  const stripped = text.replace(ADDED_SUFFIX_RE, "").trim();
+  // Guard against degenerate inputs (e.g. 2026-99-99) — Date silently
+  // rolls those over, so we sanity-check the round-trip.
+  if (
+    d.getFullYear() !== year ||
+    d.getMonth() !== month - 1 ||
+    d.getDate() !== day
+  ) {
+    return { stripped, createdAt: null };
+  }
+  return { stripped, createdAt: Math.floor(d.getTime() / 1000) };
 }
 
 /**
@@ -90,12 +123,13 @@ export function parseAppleNote(body: string): AppleNoteLine[] {
     // Checkbox: `- [ ] text` or `- [x] text`.
     const cbMatch = line.match(/^-\s*\[([ xX])\]\s+(.+)$/);
     if (cbMatch) {
-      const text = stripAddedSuffix(cbMatch[2]);
-      if (text.length === 0) continue;
+      const { stripped, createdAt } = parseAddedSuffix(cbMatch[2]);
+      if (stripped.length === 0) continue;
       out.push({
-        externalId: lineId(text),
+        externalId: lineId(stripped),
         done: cbMatch[1].toLowerCase() === "x",
-        text,
+        text: stripped,
+        createdAt,
       });
       continue;
     }
@@ -103,12 +137,13 @@ export function parseAppleNote(body: string): AppleNoteLine[] {
     // Plain bullet: `- text` (Apple Notes' native bullet rendering).
     const bulletMatch = line.match(/^[-•]\s+(.+)$/);
     if (bulletMatch) {
-      const text = stripAddedSuffix(bulletMatch[1]);
-      if (text.length === 0) continue;
+      const { stripped, createdAt } = parseAddedSuffix(bulletMatch[1]);
+      if (stripped.length === 0) continue;
       out.push({
-        externalId: lineId(text),
+        externalId: lineId(stripped),
         done: false,
-        text,
+        text: stripped,
+        createdAt,
       });
     }
   }
@@ -167,8 +202,43 @@ function asEscape(s: string): string {
 }
 
 /**
- * Read a note by title. Returns null if the note doesn't exist (so the
- * caller can create it on first sync).
+ * Build the AppleScript that returns the plaintext body of the first
+ * non-trashed matching note (or empty string if no such note exists).
+ * Pulled out alongside `buildWriteScript` so we can unit-test the
+ * shape without shelling out.
+ *
+ * Why filter trashed notes on read too: `every note whose name is X`
+ * returns notes from the Recently Deleted folder. The previous version
+ * called `first note whose name is X` and would silently read from a
+ * trashed copy — so deleting the note in Apple Notes to clear the
+ * backlog actually re-imported all its content on the next sync.
+ *
+ * The `name of container` check is wrapped in `try` because some
+ * candidates' containers don't respond to `name` (`-1728`). When we
+ * can't determine the container, we treat the note as non-trashed and
+ * use it — the write path will catch and skip it if it's actually
+ * unwritable.
+ */
+export function buildReadScript(title: string): string {
+  const escTitle = asEscape(title);
+  return `
+    tell application "Notes"
+      set candidates to every note whose name is "${escTitle}"
+      repeat with n in candidates
+        set isTrashed to false
+        try
+          if name of container of n is "Recently Deleted" then set isTrashed to true
+        end try
+        if not isTrashed then return plaintext of n
+      end repeat
+      return ""
+    end tell
+  `;
+}
+
+/**
+ * Read the canonical DryDock note. Returns null if no non-trashed note
+ * with the title exists — the caller (sync) creates one on first push.
  *
  * AppleScript's Notes interface uses `body` which is the HTML content;
  * we ask for `plaintext` so we can parse markdown-ish checkboxes
@@ -178,17 +248,7 @@ function asEscape(s: string): string {
 export async function readAppleNote(
   title: string = DEFAULT_NOTE_TITLE,
 ): Promise<string | null> {
-  const escTitle = asEscape(title);
-  const script = `
-    tell application "Notes"
-      try
-        set theNote to first note whose name is "${escTitle}"
-        return plaintext of theNote
-      on error
-        return ""
-      end try
-    end tell
-  `;
+  const script = buildReadScript(title);
   try {
     const { stdout } = await execFileP("osascript", ["-e", script]);
     const body = stdout.trimEnd();

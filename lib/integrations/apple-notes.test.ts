@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   bodyToHtml,
+  buildReadScript,
   buildWriteScript,
   formatAddedDate,
   lineId,
@@ -129,6 +130,32 @@ describe("parseAppleNote with added-date suffix", () => {
     expect(withSuffix[0].externalId).toBe(without[0].externalId);
   });
 
+  it("returns createdAt parsed from the suffix as Unix seconds", () => {
+    const parsed = parseAppleNote("- [ ] dated · added 2026-05-14");
+    expect(parsed[0].createdAt).not.toBeNull();
+    // Round-trip via formatAddedDate to dodge timezone surprises (the
+    // formatter and parser both use local time at noon).
+    expect(formatAddedDate(parsed[0].createdAt!)).toBe("2026-05-14");
+  });
+
+  it("returns null createdAt when there is no parseable suffix", () => {
+    const parsed = parseAppleNote("- [ ] no date here");
+    expect(parsed[0].createdAt).toBeNull();
+  });
+
+  it("returns null createdAt for invalid dates (e.g. 2026-99-99)", () => {
+    // JS Date rolls invalid month/day silently — guard via round-trip
+    // sanity check so a malformed suffix doesn't mint a wildly-off
+    // timestamp on the created backlog row.
+    const parsed = parseAppleNote("- [ ] junk · added 2026-99-99");
+    expect(parsed[0].createdAt).toBeNull();
+    // The text retains the suffix because the regex didn't match
+    // (\d{2} caps month/day at two digits, so 99 still matches, but
+    // the round-trip check kicks in afterward — text-strip still
+    // happens). Verify the text is whatever the regex stripped.
+    expect(parsed[0].text).toBe("junk");
+  });
+
   it("round-trips items with createdAt without changing externalId", () => {
     const ts1 = Math.floor(Date.UTC(2026, 0, 1) / 1000);
     const ts2 = Math.floor(Date.UTC(2026, 4, 14) / 1000);
@@ -152,6 +179,7 @@ describe("parseAppleNote with added-date suffix", () => {
     // emit gets removed.
     const parsed = parseAppleNote("- [ ] item · added yesterday");
     expect(parsed[0].text).toBe("item · added yesterday");
+    expect(parsed[0].createdAt).toBeNull();
   });
 });
 
@@ -203,6 +231,33 @@ describe("buildWriteScript", () => {
     // AppleScript literals: " becomes \" and \ becomes \\.
     expect(script).toContain('She said \\"hi\\"');
     expect(script).toContain("C:\\\\path");
+  });
+});
+
+describe("buildReadScript", () => {
+  it("filters trashed candidates so deleting the note doesn't auto-resurrect items", () => {
+    // `first note whose name is X` matches notes in Recently Deleted
+    // too, so the previous version silently pulled items from a
+    // trashed copy and re-imported them. The new script must iterate
+    // candidates and skip the trashed ones, returning "" if no
+    // writable note exists.
+    const script = buildReadScript("MyNote");
+    expect(script).toMatch(/every note whose name is "MyNote"/);
+    expect(script).toMatch(/repeat with n in candidates/);
+    expect(script).toMatch(/name of container of n is "Recently Deleted"/);
+    expect(script).toMatch(/if not isTrashed then return plaintext of n/);
+    // No fallthrough to the deprecated `first note whose name is X`
+    // shorthand — that's the bug we're fixing.
+    expect(script).not.toMatch(/first note whose name/);
+  });
+
+  it("treats container-name-read failures as 'not trashed' (-1728 tolerance)", () => {
+    // Some candidate containers don't expose a `name` and AppleScript
+    // raises -1728. The check must be wrapped in a try so an
+    // unreadable container doesn't abort the whole read.
+    const script = buildReadScript("MyNote");
+    expect(script).toMatch(/try[\s\S]*name of container[\s\S]*end try/);
+    expect(script).toMatch(/set isTrashed to false/);
   });
 });
 

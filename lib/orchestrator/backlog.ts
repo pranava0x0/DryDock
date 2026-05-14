@@ -132,6 +132,12 @@ export async function syncWithAppleNotes(): Promise<SyncStats> {
         source: "apple-notes",
         external_id: line.externalId,
         status: line.done ? "done" : "idea",
+        // Preserve the date in the note's `· added YYYY-MM-DD` suffix
+        // so a DB rebuild from the note doesn't reset every item's
+        // history to "today." Falls back to `unixepoch()` when the
+        // line had no parseable suffix (user-typed bullet with no
+        // suffix yet).
+        ...(line.createdAt !== null ? { created_at: line.createdAt } : {}),
       });
       pulledNew += 1;
     }
