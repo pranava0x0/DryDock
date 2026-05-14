@@ -169,18 +169,33 @@ describe("formatAddedDate", () => {
 });
 
 describe("buildWriteScript", () => {
-  it("branches on `count of matches` instead of using on-error fallback", () => {
+  it("lists matches first and only creates if no candidate is writable", () => {
     const script = buildWriteScript("MyNote", "<div>hi</div>");
-    // The duplicate-note bug came from an `on error -> make new note`
-    // catch-all; we explicitly forbid that pattern here so a future
-    // refactor can't reintroduce it.
-    expect(script).not.toMatch(/on error/);
+    // The duplicate-note bug came from a single try/on-error catch-all
+    // that fell through to `make new note` on any failure. The new
+    // script must do the existence check first (without on-error) and
+    // only fall through to create after every candidate has failed.
     expect(script).toMatch(/every note whose name is "MyNote"/);
-    expect(script).toMatch(/count of matches/);
-    expect(script).toMatch(/if \(count of matches\) is 0/);
-    // Both branches present.
+    expect(script).toMatch(/set didUpdate to false/);
+    // Both branches present: per-candidate update and the final create.
+    expect(script).toMatch(/set body of n to/);
+    expect(script).toMatch(/if not didUpdate then/);
     expect(script).toMatch(/make new note/);
-    expect(script).toMatch(/set body of \(item 1 of matches\)/);
+  });
+
+  it("retries each candidate so -10000 / -1728 don't abort the sync", () => {
+    // Trashed-note candidates raise -10000 ("Can't modify a note in
+    // Recently Deleted"). Containers without a `name` property raise
+    // -1728. Both surfaced from the live preview's sync endpoint. The
+    // loop must swallow per-candidate errors and try the next one, not
+    // bail on the first failure or use a localized folder-name guard.
+    const script = buildWriteScript("MyNote", "<div>hi</div>");
+    expect(script).toMatch(/repeat with n in candidates/);
+    expect(script).toMatch(/try[\s\S]*set body of n to[\s\S]*on error/);
+    // We do NOT depend on the folder name "Recently Deleted" — that
+    // approach broke when a candidate's container itself wouldn't
+    // expose a `name`.
+    expect(script).not.toMatch(/name of container/);
   });
 
   it("escapes embedded quotes and backslashes in the title and body", () => {

@@ -226,27 +226,55 @@ export function bodyToHtml(body: string): string {
  * script without shelling out — and to make the find/create logic
  * obvious in one place.
  *
- * The old version used `first note whose name is X` inside a try/on-error
- * block; any transient AppleScript error (a permissions hiccup, an
- * iCloud-sync race, an account that hadn't loaded yet) would fall through
- * to the `on error` branch and silently `make new note`. Over time that
- * left a trail of duplicate "DryDock Backlog" notes in iCloud.
+ * Design history:
  *
- * The new version asks AppleScript for the list of matches and branches
- * on `count` instead of on error. `make new note` only fires when there
- * truly is no matching note, never as a fallback for some unrelated
- * failure.
+ *   1. The first version used `first note whose name is X` inside a
+ *      single try/on-error block; any transient AppleScript error fell
+ *      through to `make new note` and silently created a duplicate. The
+ *      trail of duplicate "DryDock Backlog" notes is what prompted this
+ *      fix in the first place.
+ *
+ *   2. The second version filtered candidates by
+ *      `name of container is not "Recently Deleted"`. That broke when a
+ *      candidate's container didn't respond to `name` (`-1728: Can't
+ *      get name of container`) — some accounts / system containers have
+ *      no name property and AppleScript raises on access.
+ *
+ *   3. (Current) Try each candidate's `set body` directly. Apple Notes
+ *      raises `-10000` ("Can't modify a note in Recently Deleted") for
+ *      trashed candidates, and may raise for other write-blockers we
+ *      can't predict; we silently skip those and try the next match.
+ *      `make new note` only runs after every candidate has failed —
+ *      never as a fallback for the existence check itself. This is
+ *      robust to localization (no hard-coded folder name) and to any
+ *      "this note isn't writable right now" reason.
+ *
+ * One known limitation: if the user has multiple writable
+ * "DryDock Backlog" notes (left over from the version-1 bug), we update
+ * the first one and leave the others alone. Cleanup is a one-time
+ * manual step in the Notes app.
  */
 export function buildWriteScript(title: string, htmlBody: string): string {
   const escTitle = asEscape(title);
   const escBody = asEscape(htmlBody);
   return `
     tell application "Notes"
-      set matches to every note whose name is "${escTitle}"
-      if (count of matches) is 0 then
+      set candidates to every note whose name is "${escTitle}"
+      set didUpdate to false
+      repeat with n in candidates
+        try
+          set body of n to "${escBody}"
+          set didUpdate to true
+          exit repeat
+        on error
+          -- Skip notes we can't write (Recently Deleted raises -10000,
+          -- locked-account notes raise other codes). Try the next
+          -- candidate; if every candidate fails we fall through to
+          -- creating a fresh note below.
+        end try
+      end repeat
+      if not didUpdate then
         make new note with properties {name:"${escTitle}", body:"${escBody}"}
-      else
-        set body of (item 1 of matches) to "${escBody}"
       end if
     end tell
   `;
