@@ -199,24 +199,14 @@ describe("formatAddedDate", () => {
 describe("buildWriteScript", () => {
   it("lists matches first and only creates if no candidate is writable", () => {
     const script = buildWriteScript("MyNote", "<div>hi</div>");
-    // The duplicate-note bug came from a single try/on-error catch-all
-    // that fell through to `make new note` on any failure. The new
-    // script must do the existence check first (without on-error) and
-    // only fall through to create after every candidate has failed.
     expect(script).toMatch(/every note whose name is "MyNote"/);
     expect(script).toMatch(/set didUpdate to false/);
-    // Both branches present: per-candidate update and the final create.
     expect(script).toMatch(/set body of n to/);
     expect(script).toMatch(/if not didUpdate then/);
     expect(script).toMatch(/make new note/);
   });
 
   it("retries each candidate so -10000 / -1728 don't abort the sync", () => {
-    // Trashed-note candidates raise -10000 ("Can't modify a note in
-    // Recently Deleted"). Containers without a `name` property raise
-    // -1728. Both surfaced from the live preview's sync endpoint. The
-    // loop must swallow per-candidate errors and try the next one, not
-    // bail on the first failure or use a localized folder-name guard.
     const script = buildWriteScript("MyNote", "<div>hi</div>");
     expect(script).toMatch(/repeat with n in candidates/);
     expect(script).toMatch(/try[\s\S]*set body of n to[\s\S]*on error/);
@@ -224,6 +214,23 @@ describe("buildWriteScript", () => {
     // approach broke when a candidate's container itself wouldn't
     // expose a `name`.
     expect(script).not.toMatch(/name of container/);
+  });
+
+  it("deletes additional writable candidates so future syncs converge", () => {
+    // Before this fix, the loop `exit repeat`ed on the first writable
+    // match. With multiple writable copies (left over from the V1 bug
+    // or from a parallel dev server), each sync's non-deterministic
+    // pick made it *look* like new notes were being created — the
+    // existing ones kept rising to the top of the sidebar. The keeper
+    // must now branch on didUpdate: first writable becomes the keeper,
+    // every later writable gets `delete`d (soft delete to Recently
+    // Deleted, restorable for 30 days).
+    const script = buildWriteScript("MyNote", "<div>hi</div>");
+    expect(script).toMatch(/if not didUpdate then[\s\S]*set body of n to/);
+    expect(script).toMatch(/else[\s\S]*delete n/);
+    // Crucially: no early `exit repeat`. We iterate the whole list so
+    // every duplicate is caught in a single pass.
+    expect(script).not.toMatch(/exit repeat/);
   });
 
   it("escapes embedded quotes and backslashes in the title and body", () => {

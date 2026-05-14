@@ -1,9 +1,12 @@
 import {
   createBacklogItem,
+  deleteBacklogItem,
   getBacklogItem,
   getBacklogItemByExternalId,
   listBacklog,
   updateBacklogItem,
+  type BacklogItem,
+  type BacklogStatus,
 } from "../db/backlog";
 import { createTask } from "../db/tasks";
 import { getProject, listProjects } from "../db/projects";
@@ -187,6 +190,103 @@ export async function pushToAppleNotesSilently(): Promise<{ ok: boolean; error?:
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }
+}
+
+/**
+ * Status priority for dedupe merging. Higher = more "load-bearing":
+ *
+ *   - done: user explicitly completed it
+ *   - in_progress: there's a real task hanging off it
+ *   - idea: default state, lowest signal
+ *   - dropped: user explicitly dismissed it
+ *
+ * When duplicates exist, the merged row keeps the status with the
+ * highest score so a "done" copy doesn't get resurrected as "idea".
+ */
+const STATUS_RANK: Record<BacklogStatus, number> = {
+  done: 3,
+  in_progress: 2,
+  idea: 1,
+  dropped: 0,
+};
+
+export interface DedupeReport {
+  /** Total rows removed across all groups. */
+  removed: number;
+  /** Number of duplicate groups collapsed (each had ≥2 members). */
+  groupsMerged: number;
+  /** Ids that were deleted, in case the caller wants to surface them. */
+  deletedIds: string[];
+}
+
+/**
+ * Collapse same-title duplicates in the backlog. Same trimmed,
+ * case-folded title = same logical item, even if one came from a
+ * manual entry and the other from Apple Notes (or two manuals got
+ * typed twice).
+ *
+ * Keeper selection:
+ *   1. Prefer the apple-notes-sourced row (has a stable external_id
+ *      so a future re-sync finds it without minting a new row).
+ *   2. Within the same source, prefer the oldest created_at — the
+ *      original is the "real" item; later duplicates are noise.
+ *
+ * Field merging onto the keeper:
+ *   - status: highest STATUS_RANK across the group (so a "done" copy
+ *     doesn't get demoted back to "idea")
+ *   - project_id, task_id: first non-null wins (no clobber of an
+ *     intentional assignment with a null from a stray duplicate)
+ *
+ * Duplicates are then `deleteBacklogItem`'d. The Apple Notes push that
+ * follows will reflect the consolidated DB.
+ */
+export function dedupeBacklogItems(): DedupeReport {
+  const all = listBacklog();
+  const groups = new Map<string, BacklogItem[]>();
+  for (const item of all) {
+    const key = item.title.trim().toLowerCase();
+    if (!key) continue;
+    const bucket = groups.get(key) ?? [];
+    bucket.push(item);
+    groups.set(key, bucket);
+  }
+
+  const report: DedupeReport = { removed: 0, groupsMerged: 0, deletedIds: [] };
+  for (const bucket of groups.values()) {
+    if (bucket.length < 2) continue;
+    bucket.sort((a, b) => {
+      if (a.source !== b.source) {
+        return a.source === "apple-notes" ? -1 : 1;
+      }
+      return a.created_at - b.created_at;
+    });
+    const keeper = bucket[0];
+    const dupes = bucket.slice(1);
+
+    let bestStatus: BacklogStatus = keeper.status;
+    let bestProject = keeper.project_id;
+    let bestTaskId = keeper.task_id;
+    for (const d of dupes) {
+      if (STATUS_RANK[d.status] > STATUS_RANK[bestStatus]) {
+        bestStatus = d.status;
+      }
+      if (bestProject === null && d.project_id !== null) bestProject = d.project_id;
+      if (bestTaskId === null && d.task_id !== null) bestTaskId = d.task_id;
+    }
+
+    updateBacklogItem(keeper.id, {
+      status: bestStatus,
+      project_id: bestProject,
+      task_id: bestTaskId,
+    });
+    for (const d of dupes) {
+      deleteBacklogItem(d.id);
+      report.deletedIds.push(d.id);
+      report.removed += 1;
+    }
+    report.groupsMerged += 1;
+  }
+  return report;
 }
 
 /**

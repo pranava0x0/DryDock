@@ -290,29 +290,31 @@ export function bodyToHtml(body: string): string {
  *
  *   1. The first version used `first note whose name is X` inside a
  *      single try/on-error block; any transient AppleScript error fell
- *      through to `make new note` and silently created a duplicate. The
- *      trail of duplicate "DryDock Backlog" notes is what prompted this
- *      fix in the first place.
+ *      through to `make new note` and silently created a duplicate.
  *
  *   2. The second version filtered candidates by
  *      `name of container is not "Recently Deleted"`. That broke when a
- *      candidate's container didn't respond to `name` (`-1728: Can't
- *      get name of container`) — some accounts / system containers have
- *      no name property and AppleScript raises on access.
+ *      candidate's container didn't respond to `name` (`-1728`).
  *
- *   3. (Current) Try each candidate's `set body` directly. Apple Notes
- *      raises `-10000` ("Can't modify a note in Recently Deleted") for
- *      trashed candidates, and may raise for other write-blockers we
- *      can't predict; we silently skip those and try the next match.
- *      `make new note` only runs after every candidate has failed —
- *      never as a fallback for the existence check itself. This is
- *      robust to localization (no hard-coded folder name) and to any
- *      "this note isn't writable right now" reason.
+ *   3. The third version tried each candidate's `set body` directly,
+ *      `exit repeat`-ing on the first success. Fixed the create-on-
+ *      every-error problem, but left existing duplicates in place. Each
+ *      sync touched *some* writable duplicate (AppleScript's
+ *      enumeration order is non-deterministic), so different copies
+ *      kept rising to the top of the sidebar — visually indistinguish-
+ *      able from "still creating new notes on every sync."
  *
- * One known limitation: if the user has multiple writable
- * "DryDock Backlog" notes (left over from the version-1 bug), we update
- * the first one and leave the others alone. Cleanup is a one-time
- * manual step in the Notes app.
+ *   4. (Current) Active deduplication. After the first successful
+ *      `set body`, every other writable candidate gets `delete`d —
+ *      moved to Recently Deleted, where the user can restore from for
+ *      30 days. Future syncs converge to a single canonical note. We
+ *      keep going through the loop instead of `exit repeat`ing so we
+ *      catch every duplicate in one pass.
+ *
+ * Apple's `delete note` is a soft delete — the note lands in Recently
+ * Deleted and survives 30 days, so the action is reversible if a user
+ * happens to have created their own unrelated "DryDock Backlog" note
+ * we end up trashing. The title match is intentionally strict.
  */
 export function buildWriteScript(title: string, htmlBody: string): string {
   const escTitle = asEscape(title);
@@ -323,14 +325,19 @@ export function buildWriteScript(title: string, htmlBody: string): string {
       set didUpdate to false
       repeat with n in candidates
         try
-          set body of n to "${escBody}"
-          set didUpdate to true
-          exit repeat
+          if not didUpdate then
+            set body of n to "${escBody}"
+            set didUpdate to true
+          else
+            -- Another writable note with the same name exists. Move it
+            -- to Recently Deleted so future syncs converge to a single
+            -- canonical note. Soft delete — restorable for 30 days.
+            delete n
+          end if
         on error
           -- Skip notes we can't write (Recently Deleted raises -10000,
-          -- locked-account notes raise other codes). Try the next
-          -- candidate; if every candidate fails we fall through to
-          -- creating a fresh note below.
+          -- locked-account notes raise other codes). The keeper-or-
+          -- delete decision only applies to writable matches.
         end try
       end repeat
       if not didUpdate then

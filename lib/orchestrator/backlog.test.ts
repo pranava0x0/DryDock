@@ -4,9 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetDbForTests, getDb } from "../db";
 import { createProject } from "../db/projects";
-import { createBacklogItem, getBacklogItem } from "../db/backlog";
+import {
+  createBacklogItem,
+  getBacklogItem,
+  listBacklog,
+  updateBacklogItem,
+} from "../db/backlog";
 import { getTask } from "../db/tasks";
-import { backlogSummary, BurnDownError, burnDownBacklogItem } from "./backlog";
+import {
+  backlogSummary,
+  BurnDownError,
+  burnDownBacklogItem,
+  dedupeBacklogItems,
+} from "./backlog";
 
 beforeEach(() => {
   _resetDbForTests();
@@ -63,6 +73,101 @@ describe("burnDownBacklogItem", () => {
       expect(err).toBeInstanceOf(BurnDownError);
       expect((err as BurnDownError).code).toBe("item_not_found");
     }
+  });
+});
+
+describe("dedupeBacklogItems", () => {
+  it("collapses same-title rows across manual + apple-notes sources", () => {
+    const manual = createBacklogItem({ title: "Add dark mode" });
+    const fromNote = createBacklogItem({
+      title: "Add dark mode",
+      source: "apple-notes",
+      external_id: "darkmode",
+    });
+
+    const report = dedupeBacklogItems();
+    expect(report.removed).toBe(1);
+    expect(report.groupsMerged).toBe(1);
+
+    // Apple-notes-sourced row wins the keeper slot — it has a stable
+    // external_id that survives a future re-sync without minting a
+    // new row.
+    expect(getBacklogItem(fromNote.id)).not.toBeNull();
+    expect(getBacklogItem(manual.id)).toBeNull();
+  });
+
+  it("treats trimmed and case-folded titles as the same group", () => {
+    const a = createBacklogItem({ title: "Refactor auth" });
+    const b = createBacklogItem({ title: "  refactor AUTH  " });
+
+    const report = dedupeBacklogItems();
+    expect(report.removed).toBe(1);
+    // Same source: keeper is the older row (a was inserted first).
+    expect(getBacklogItem(a.id)).not.toBeNull();
+    expect(getBacklogItem(b.id)).toBeNull();
+  });
+
+  it("merges status onto the keeper using done > in_progress > idea > dropped", () => {
+    const proj = createProject({ name: "P", path: "/tmp/p" });
+    const keeper = createBacklogItem({
+      title: "Ship feature",
+      source: "apple-notes",
+      external_id: "ship",
+    });
+    // Newer manual copy has status=done — the merge must promote the
+    // keeper to done so the user doesn't see a resurrected idea.
+    const completed = createBacklogItem({
+      title: "Ship feature",
+      project_id: proj.id,
+      status: "in_progress",
+    });
+    updateBacklogItem(completed.id, { status: "done" });
+
+    dedupeBacklogItems();
+
+    const merged = getBacklogItem(keeper.id);
+    expect(merged?.status).toBe("done");
+    // project_id was null on the keeper and set on the duplicate — the
+    // merge fills it in rather than clobbering with null.
+    expect(merged?.project_id).toBe(proj.id);
+  });
+
+  it("does not clobber a project_id on the keeper with null from a duplicate", () => {
+    const proj = createProject({ name: "P", path: "/tmp/p" });
+    const keeper = createBacklogItem({
+      title: "Has project",
+      source: "apple-notes",
+      external_id: "k",
+      project_id: proj.id,
+    });
+    createBacklogItem({ title: "Has project" }); // project_id: null
+
+    dedupeBacklogItems();
+
+    expect(getBacklogItem(keeper.id)?.project_id).toBe(proj.id);
+  });
+
+  it("leaves singletons alone and reports zero work", () => {
+    createBacklogItem({ title: "alone" });
+    createBacklogItem({ title: "also alone" });
+
+    const report = dedupeBacklogItems();
+    expect(report.removed).toBe(0);
+    expect(report.groupsMerged).toBe(0);
+    expect(listBacklog()).toHaveLength(2);
+  });
+
+  it("handles 3+ duplicates in a single group", () => {
+    createBacklogItem({ title: "thrice" });
+    createBacklogItem({ title: "thrice" });
+    createBacklogItem({ title: "thrice" });
+
+    const report = dedupeBacklogItems();
+    expect(report.removed).toBe(2);
+    expect(report.groupsMerged).toBe(1);
+    expect(
+      listBacklog().filter((i) => i.title.trim().toLowerCase() === "thrice"),
+    ).toHaveLength(1);
   });
 });
 
