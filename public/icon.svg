@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background: Kraken Deep Sea Blue. Matches the PWA theme color. -->
+  <rect width="512" height="512" rx="96" fill="#001628"/>
+  <!-- Anchor: Kraken Ice on a Boundless Blue stockless-style fluke arc. -->
+  <g fill="none" stroke="#99D9D9" stroke-width="32" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Ring / shackle at the top. -->
+    <circle cx="256" cy="120" r="36"/>
+    <!-- Shank: vertical column running through the stock to the fluke arc. -->
+    <line x1="256" y1="156" x2="256" y2="400"/>
+    <!-- Stock: horizontal crossbar. -->
+    <line x1="176" y1="208" x2="336" y2="208"/>
+    <!-- Fluke arc: stockless anchor's curved arms. -->
+    <path d="M120 320 Q120 416 256 416 Q392 416 392 320"/>
+    <!-- Inner highlight on the fluke for a hint of dimension. -->
+  </g>
+  <!-- Subtle Boundless Blue glow ring behind the shackle for depth. -->
+  <circle cx="256" cy="120" r="56" fill="none" stroke="#355464" stroke-width="6"/>
+</svg>

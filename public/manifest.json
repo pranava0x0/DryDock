@@ -1,0 +1,17 @@
+{
+  "name": "DryDock",
+  "short_name": "DryDock",
+  "description": "Personal project orchestrator",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#001628",
+  "theme_color": "#001628",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
