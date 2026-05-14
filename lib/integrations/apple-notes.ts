@@ -202,27 +202,37 @@ function asEscape(s: string): string {
 }
 
 /**
- * Build the AppleScript that returns the plaintext body of the first
- * non-trashed matching note (or empty string if no such note exists).
- * Pulled out alongside `buildWriteScript` so we can unit-test the
- * shape without shelling out.
+ * Build the AppleScript that returns the plaintext body of the canonical
+ * DryDock note (or empty string if none exists).
  *
- * Why filter trashed notes on read too: `every note whose name is X`
- * returns notes from the Recently Deleted folder. The previous version
- * called `first note whose name is X` and would silently read from a
- * trashed copy — so deleting the note in Apple Notes to clear the
- * backlog actually re-imported all its content on the next sync.
+ * Same selection order as `buildWriteScript`:
+ *   1. If `knownId` is set, look the note up by id directly.
+ *   2. Otherwise iterate matches by name and skip trashed ones.
  *
- * The `name of container` check is wrapped in `try` because some
- * candidates' containers don't respond to `name` (`-1728`). When we
- * can't determine the container, we treat the note as non-trashed and
- * use it — the write path will catch and skip it if it's actually
+ * Filtering trashed notes on read matters too — without it, deleting
+ * the note in Apple Notes to clear the backlog silently re-imports all
+ * its content on the next sync because `first note whose name is X`
+ * still returns the trashed copy.
+ *
+ * `name of container` is wrapped in `try` because some candidates'
+ * containers don't respond to `name` (`-1728`). When we can't
+ * determine the container, we treat the note as non-trashed and use
+ * it — the write path will catch and skip it if it's actually
  * unwritable.
  */
-export function buildReadScript(title: string): string {
+export function buildReadScript(
+  title: string,
+  knownId: string | null = null,
+): string {
   const escTitle = asEscape(title);
+  const escId = asEscape(knownId ?? "");
   return `
     tell application "Notes"
+      if "${escId}" is not "" then
+        try
+          return plaintext of (note id "${escId}")
+        end try
+      end if
       set candidates to every note whose name is "${escTitle}"
       repeat with n in candidates
         set isTrashed to false
@@ -240,6 +250,11 @@ export function buildReadScript(title: string): string {
  * Read the canonical DryDock note. Returns null if no non-trashed note
  * with the title exists — the caller (sync) creates one on first push.
  *
+ * Pass `knownId` (the persisted Apple Notes id from a previous write)
+ * to short-circuit the title lookup and read the exact same note we
+ * last wrote to. If that id is stale (note deleted) we fall back to
+ * the by-name path inside the script.
+ *
  * AppleScript's Notes interface uses `body` which is the HTML content;
  * we ask for `plaintext` so we can parse markdown-ish checkboxes
  * directly. iOS / iCloud Notes render `-` as a bullet, so the round-trip
@@ -247,8 +262,9 @@ export function buildReadScript(title: string): string {
  */
 export async function readAppleNote(
   title: string = DEFAULT_NOTE_TITLE,
+  knownId: string | null = null,
 ): Promise<string | null> {
-  const script = buildReadScript(title);
+  const script = buildReadScript(title, knownId);
   try {
     const { stdout } = await execFileP("osascript", ["-e", script]);
     const body = stdout.trimEnd();
@@ -281,68 +297,61 @@ export function bodyToHtml(body: string): string {
 }
 
 /**
- * Build the AppleScript that finds-or-creates the canonical DryDock note
- * and replaces its body. Pulled out so we can unit-test the shape of the
- * script without shelling out — and to make the find/create logic
- * obvious in one place.
+ * Build the AppleScript that updates the canonical DryDock note's body
+ * and returns its stable Apple Notes id (e.g.
+ * `x-coredata://UUID/ICNote/p297`) on stdout. Pulled out so we can
+ * unit-test the shape without shelling out.
  *
- * Design history:
+ * Selection order — the script tries each branch and returns on the
+ * first success:
  *
- *   1. The first version used `first note whose name is X` inside a
- *      single try/on-error block; any transient AppleScript error fell
- *      through to `make new note` and silently created a duplicate.
+ *   1. **Known id** (`knownId` non-empty). `set body of note id "..."`
+ *      targets one specific note regardless of name collisions. This
+ *      is the steady-state path once the first successful sync has
+ *      stored an id. Catches `note id` lookup failures (deleted,
+ *      Recently Deleted) and falls through.
  *
- *   2. The second version filtered candidates by
- *      `name of container is not "Recently Deleted"`. That broke when a
- *      candidate's container didn't respond to `name` (`-1728`).
+ *   2. **Find writable by name.** `every note whose name is X` returns
+ *      every candidate (including Recently Deleted); we iterate and
+ *      use the first one whose `set body` succeeds. AppleScript's
+ *      enumeration order isn't deterministic, but once a candidate is
+ *      picked its id gets stored and the next sync uses branch 1.
  *
- *   3. The third version tried each candidate's `set body` directly,
- *      `exit repeat`-ing on the first success. Fixed the create-on-
- *      every-error problem, but left existing duplicates in place. Each
- *      sync touched *some* writable duplicate (AppleScript's
- *      enumeration order is non-deterministic), so different copies
- *      kept rising to the top of the sidebar — visually indistinguish-
- *      able from "still creating new notes on every sync."
+ *   3. **Create.** `make new note` only runs when no writable
+ *      candidate exists — never as a fallback for transient errors,
+ *      which was the V1 duplicate-note bug.
  *
- *   4. (Current) Active deduplication. After the first successful
- *      `set body`, every other writable candidate gets `delete`d —
- *      moved to Recently Deleted, where the user can restore from for
- *      30 days. Future syncs converge to a single canonical note. We
- *      keep going through the loop instead of `exit repeat`ing so we
- *      catch every duplicate in one pass.
- *
- * Apple's `delete note` is a soft delete — the note lands in Recently
- * Deleted and survives 30 days, so the action is reversible if a user
- * happens to have created their own unrelated "DryDock Backlog" note
- * we end up trashing. The title match is intentionally strict.
+ * Returning the id lets the caller persist it so subsequent syncs
+ * lock onto the same note. Without this, V3/V4 picked a different
+ * writable duplicate on each sync (and V4 trashed the rest); V5
+ * leaves duplicates untouched and targets one specific note for life.
  */
-export function buildWriteScript(title: string, htmlBody: string): string {
+export function buildWriteScript(
+  title: string,
+  htmlBody: string,
+  knownId: string | null = null,
+): string {
   const escTitle = asEscape(title);
   const escBody = asEscape(htmlBody);
+  const escId = asEscape(knownId ?? "");
   return `
     tell application "Notes"
+      if "${escId}" is not "" then
+        try
+          set targetNote to note id "${escId}"
+          set body of targetNote to "${escBody}"
+          return id of targetNote
+        end try
+      end if
       set candidates to every note whose name is "${escTitle}"
-      set didUpdate to false
       repeat with n in candidates
         try
-          if not didUpdate then
-            set body of n to "${escBody}"
-            set didUpdate to true
-          else
-            -- Another writable note with the same name exists. Move it
-            -- to Recently Deleted so future syncs converge to a single
-            -- canonical note. Soft delete — restorable for 30 days.
-            delete n
-          end if
-        on error
-          -- Skip notes we can't write (Recently Deleted raises -10000,
-          -- locked-account notes raise other codes). The keeper-or-
-          -- delete decision only applies to writable matches.
+          set body of n to "${escBody}"
+          return id of n
         end try
       end repeat
-      if not didUpdate then
-        make new note with properties {name:"${escTitle}", body:"${escBody}"}
-      end if
+      set newNote to make new note with properties {name:"${escTitle}", body:"${escBody}"}
+      return id of newNote
     end tell
   `;
 }
@@ -352,18 +361,26 @@ export function buildWriteScript(title: string, htmlBody: string): string {
  * because Apple Notes stores everything as HTML internally — passing
  * plain text would collapse all our newlines into one paragraph.
  *
- * If two notes with the same title already exist (e.g. left over from
- * the previous version's duplicate-create bug), we update the first
- * match and leave the rest alone. Future cleanup is a manual one-time
- * task in the Notes app.
+ * Pass `knownId` to target a specific note regardless of name (the
+ * persisted Apple Notes id from a previous write). When the script
+ * succeeds it returns the id of the note it ended up writing to —
+ * either `knownId`, a found-by-name match, or a freshly-created note.
+ * The caller persists that id so the next sync hits the same note
+ * even if the user has multiple "DryDock Backlog" copies.
+ *
+ * Returns null if the script ran but didn't yield a usable id (should
+ * not happen in practice; included for type-safety on the caller).
  */
 export async function writeAppleNote(
   title: string,
   body: string,
-): Promise<void> {
-  const script = buildWriteScript(title, bodyToHtml(body));
+  knownId: string | null = null,
+): Promise<string | null> {
+  const script = buildWriteScript(title, bodyToHtml(body), knownId);
   try {
-    await execFileP("osascript", ["-e", script]);
+    const { stdout } = await execFileP("osascript", ["-e", script]);
+    const id = stdout.trim();
+    return id.length === 0 ? null : id;
   } catch (err) {
     throw new Error(`Apple Notes write failed: ${(err as Error).message}`);
   }

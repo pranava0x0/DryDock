@@ -197,72 +197,84 @@ describe("formatAddedDate", () => {
 });
 
 describe("buildWriteScript", () => {
-  it("lists matches first and only creates if no candidate is writable", () => {
-    const script = buildWriteScript("MyNote", "<div>hi</div>");
+  it("targets the stored note id first, before falling back to by-name search", () => {
+    // V5: the steady-state path. After the first successful sync we
+    // persist the note's stable id; subsequent writes hit it directly
+    // and never enumerate by name, which is what made V3 look like it
+    // was rotating through duplicates.
+    const script = buildWriteScript("MyNote", "<div>hi</div>", "x-coredata://abc/ICNote/p1");
+    expect(script).toMatch(
+      /set targetNote to note id "x-coredata:\/\/abc\/ICNote\/p1"/,
+    );
+    expect(script).toMatch(/set body of targetNote to/);
+    expect(script).toMatch(/return id of targetNote/);
+  });
+
+  it("falls back to find-writable-by-name when no id is stored", () => {
+    const script = buildWriteScript("MyNote", "<div>hi</div>", null);
+    // Empty id literal — the script's `if "" is not ""` guard skips
+    // the id branch entirely on the first ever sync.
+    expect(script).toMatch(/if "" is not ""/);
     expect(script).toMatch(/every note whose name is "MyNote"/);
-    expect(script).toMatch(/set didUpdate to false/);
-    expect(script).toMatch(/set body of n to/);
-    expect(script).toMatch(/if not didUpdate then/);
-    expect(script).toMatch(/make new note/);
-  });
-
-  it("retries each candidate so -10000 / -1728 don't abort the sync", () => {
-    const script = buildWriteScript("MyNote", "<div>hi</div>");
     expect(script).toMatch(/repeat with n in candidates/);
-    expect(script).toMatch(/try[\s\S]*set body of n to[\s\S]*on error/);
-    // We do NOT depend on the folder name "Recently Deleted" — that
-    // approach broke when a candidate's container itself wouldn't
-    // expose a `name`.
-    expect(script).not.toMatch(/name of container/);
+    expect(script).toMatch(/return id of n/);
   });
 
-  it("deletes additional writable candidates so future syncs converge", () => {
-    // Before this fix, the loop `exit repeat`ed on the first writable
-    // match. With multiple writable copies (left over from the V1 bug
-    // or from a parallel dev server), each sync's non-deterministic
-    // pick made it *look* like new notes were being created — the
-    // existing ones kept rising to the top of the sidebar. The keeper
-    // must now branch on didUpdate: first writable becomes the keeper,
-    // every later writable gets `delete`d (soft delete to Recently
-    // Deleted, restorable for 30 days).
-    const script = buildWriteScript("MyNote", "<div>hi</div>");
-    expect(script).toMatch(/if not didUpdate then[\s\S]*set body of n to/);
-    expect(script).toMatch(/else[\s\S]*delete n/);
-    // Crucially: no early `exit repeat`. We iterate the whole list so
-    // every duplicate is caught in a single pass.
-    expect(script).not.toMatch(/exit repeat/);
+  it("returns the id of a freshly-created note when no candidate is writable", () => {
+    const script = buildWriteScript("MyNote", "<div>hi</div>", null);
+    expect(script).toMatch(/make new note with properties/);
+    expect(script).toMatch(/return id of newNote/);
   });
 
-  it("escapes embedded quotes and backslashes in the title and body", () => {
-    const script = buildWriteScript('She said "hi"', 'C:\\path');
-    // AppleScript literals: " becomes \" and \ becomes \\.
+  it("never deletes existing notes (the user asked us to edit, not trash)", () => {
+    // V4 actively `delete`d duplicate writable matches. The user
+    // pushed back: duplicates should be left alone, we just need to
+    // consistently edit one specific note. The id-stable approach
+    // accomplishes that without ever trashing user data — regression
+    // pin so a future refactor doesn't reintroduce delete.
+    const idScript = buildWriteScript("MyNote", "<div>hi</div>", "abc");
+    const noIdScript = buildWriteScript("MyNote", "<div>hi</div>", null);
+    expect(idScript).not.toMatch(/delete /);
+    expect(noIdScript).not.toMatch(/delete /);
+  });
+
+  it("retries through candidates so -10000 / -1728 don't abort the sync", () => {
+    // Trashed-note candidates raise -10000; containers without a
+    // `name` raise -1728. The loop must swallow per-candidate errors.
+    const script = buildWriteScript("MyNote", "<div>hi</div>", null);
+    expect(script).toMatch(/try[\s\S]*set body of n to[\s\S]*end try/);
+  });
+
+  it("escapes embedded quotes and backslashes in the title, body, and id", () => {
+    const script = buildWriteScript('She said "hi"', 'C:\\path', 'id"with\\stuff');
     expect(script).toContain('She said \\"hi\\"');
     expect(script).toContain("C:\\\\path");
+    expect(script).toContain('id\\"with\\\\stuff');
   });
 });
 
 describe("buildReadScript", () => {
-  it("filters trashed candidates so deleting the note doesn't auto-resurrect items", () => {
-    // `first note whose name is X` matches notes in Recently Deleted
-    // too, so the previous version silently pulled items from a
-    // trashed copy and re-imported them. The new script must iterate
-    // candidates and skip the trashed ones, returning "" if no
-    // writable note exists.
-    const script = buildReadScript("MyNote");
+  it("hits the stored note id directly when one is provided", () => {
+    const script = buildReadScript("MyNote", "x-coredata://abc/ICNote/p1");
+    expect(script).toMatch(
+      /plaintext of \(note id "x-coredata:\/\/abc\/ICNote\/p1"\)/,
+    );
+  });
+
+  it("filters trashed candidates on the by-name fallback path", () => {
+    // First-ever sync has no stored id, so we must still skip trashed
+    // matches — otherwise deleting the note in Apple Notes to clear
+    // the backlog silently re-imports its content on the next sync.
+    const script = buildReadScript("MyNote", null);
     expect(script).toMatch(/every note whose name is "MyNote"/);
     expect(script).toMatch(/repeat with n in candidates/);
     expect(script).toMatch(/name of container of n is "Recently Deleted"/);
     expect(script).toMatch(/if not isTrashed then return plaintext of n/);
-    // No fallthrough to the deprecated `first note whose name is X`
-    // shorthand — that's the bug we're fixing.
     expect(script).not.toMatch(/first note whose name/);
   });
 
   it("treats container-name-read failures as 'not trashed' (-1728 tolerance)", () => {
-    // Some candidate containers don't expose a `name` and AppleScript
-    // raises -1728. The check must be wrapped in a try so an
-    // unreadable container doesn't abort the whole read.
-    const script = buildReadScript("MyNote");
+    const script = buildReadScript("MyNote", null);
     expect(script).toMatch(/try[\s\S]*name of container[\s\S]*end try/);
     expect(script).toMatch(/set isTrashed to false/);
   });

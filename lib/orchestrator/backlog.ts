@@ -20,6 +20,16 @@ import {
 } from "../integrations/apple-notes";
 
 export const NOTES_TITLE_KEY = "apple_notes_title";
+/**
+ * Stable Apple Notes id of the canonical DryDock note (`x-coredata://
+ * <accountUUID>/ICNote/p<n>`). Persisted after the first successful
+ * write so subsequent syncs can target that exact note rather than
+ * leaving the choice to AppleScript's non-deterministic by-name
+ * enumeration — which is what made it look like duplicates were still
+ * being created post-V3. Cleared when the stored id no longer resolves
+ * (note manually deleted, account removed).
+ */
+export const NOTES_NOTE_ID_KEY = "apple_notes_note_id";
 
 export function getNotesTitle(): string {
   return getSetting(NOTES_TITLE_KEY) ?? DEFAULT_NOTE_TITLE;
@@ -27,6 +37,18 @@ export function getNotesTitle(): string {
 
 export function setNotesTitle(title: string): void {
   setSetting(NOTES_TITLE_KEY, title);
+}
+
+export function getNotesNoteId(): string | null {
+  return getSetting(NOTES_NOTE_ID_KEY);
+}
+
+export function setNotesNoteId(id: string | null): void {
+  if (id === null || id.length === 0) {
+    setSetting(NOTES_NOTE_ID_KEY, "");
+  } else {
+    setSetting(NOTES_NOTE_ID_KEY, id);
+  }
 }
 
 export class BurnDownError extends Error {
@@ -112,10 +134,16 @@ export interface SyncStats {
  */
 export async function syncWithAppleNotes(): Promise<SyncStats> {
   const title = getNotesTitle();
+  // Stable id stored from the last successful write. Lets the script
+  // hit `note id "..."` directly instead of relying on AppleScript's
+  // by-name enumeration, which is what caused the "looks like new
+  // notes on every sync" behavior — different writable duplicates
+  // kept rising to the top of the sidebar.
+  const storedNoteId = getNotesNoteId();
   let pulledNew = 0;
   let pulledUpdated = 0;
 
-  const body = await readAppleNote(title);
+  const body = await readAppleNote(title, storedNoteId);
   if (body !== null) {
     const lines = parseAppleNote(body);
     for (const line of lines) {
@@ -158,7 +186,18 @@ export async function syncWithAppleNotes(): Promise<SyncStats> {
       status: i.status,
       createdAt: i.created_at,
     }));
-  await writeAppleNote(title, renderAppleNoteBody(renderable));
+  const writtenId = await writeAppleNote(
+    title,
+    renderAppleNoteBody(renderable),
+    storedNoteId,
+  );
+  // Persist the id that the script actually used. On the first sync
+  // after install (or after the user deletes the stored note) this is
+  // the id of the writable match the script picked or the one it
+  // freshly created — locking subsequent syncs onto that exact note.
+  if (writtenId && writtenId !== storedNoteId) {
+    setNotesNoteId(writtenId);
+  }
 
   return {
     notesTitle: title,
@@ -177,6 +216,7 @@ export async function syncWithAppleNotes(): Promise<SyncStats> {
 export async function pushToAppleNotesSilently(): Promise<{ ok: boolean; error?: string }> {
   try {
     const title = getNotesTitle();
+    const storedNoteId = getNotesNoteId();
     const items = listBacklog();
     const renderable = items
       .filter((i) => i.status !== "dropped")
@@ -185,7 +225,14 @@ export async function pushToAppleNotesSilently(): Promise<{ ok: boolean; error?:
         status: i.status,
         createdAt: i.created_at,
       }));
-    await writeAppleNote(title, renderAppleNoteBody(renderable));
+    const writtenId = await writeAppleNote(
+      title,
+      renderAppleNoteBody(renderable),
+      storedNoteId,
+    );
+    if (writtenId && writtenId !== storedNoteId) {
+      setNotesNoteId(writtenId);
+    }
     return { ok: true };
   } catch (err) {
     return { ok: false, error: (err as Error).message };
