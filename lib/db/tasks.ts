@@ -206,6 +206,26 @@ export interface TaskCountsByStatus {
 }
 
 /**
+ * Cross-project list of in-flight tasks (claimed or running) for the
+ * dashboard's live-tail panel. Newest claim first so a slow / stuck task
+ * is easy to spot. We don't include 'pending' here — that's a backlog,
+ * not in-flight work.
+ */
+export function listInFlightTasks(): Task[] {
+  const db = getDb();
+  return db
+    .prepare(
+      `SELECT id, project_id, title, description, provider, status, priority,
+              branch, worktree_path, pr_url, created_at, updated_at,
+              claimed_at, completed_at
+       FROM tasks
+       WHERE status IN ('claimed', 'running')
+       ORDER BY COALESCE(claimed_at, updated_at) DESC`,
+    )
+    .all() as Task[];
+}
+
+/**
  * Return a status histogram for a project. Used by the dashboard card so it
  * can show "3 pending / 1 running" without round-tripping every task row.
  */

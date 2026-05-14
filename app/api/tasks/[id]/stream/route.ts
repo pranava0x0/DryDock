@@ -1,10 +1,11 @@
 import type { NextRequest } from "next/server";
 import { getTask } from "@/lib/db/tasks";
-import { getLatestRunForTask, getRun, type Run } from "@/lib/db/runs";
+import { getLatestRunForTask } from "@/lib/db/runs";
 import {
   getActiveRunController,
 } from "@/lib/orchestrator/dispatch";
 import { subscribe } from "@/lib/orchestrator/hub";
+import { replayFromDb } from "@/lib/orchestrator/replay";
 import { notFound } from "@/lib/api/json";
 
 export const runtime = "nodejs";
@@ -104,29 +105,3 @@ export async function GET(
   });
 }
 
-/**
- * Replay a terminated run from the database. Used when the in-memory hub
- * no longer has the run's event history (e.g. after a server restart) or
- * when the run was already terminal at connection time.
- *
- * Both `output` and `error` are surfaced — empty stdout is the common case
- * for an immediate spawn failure, and the user needs the stderr text to
- * understand what went wrong.
- */
-function replayFromDb(runId: string, send: (payload: unknown) => void): void {
-  const run: Run | null = getRun(runId);
-  if (!run) return;
-  if (run.output && run.output.length > 0) {
-    send({ type: "stdout", data: run.output });
-  }
-  if (run.error && run.error.length > 0) {
-    send({ type: "stderr", data: run.error });
-  }
-  if (run.status !== "running") {
-    send({
-      type: "exit",
-      data: run.status,
-      code: run.status === "success" ? 0 : -1,
-    });
-  }
-}

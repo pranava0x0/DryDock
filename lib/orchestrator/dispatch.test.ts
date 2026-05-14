@@ -174,14 +174,16 @@ describe("dispatchTask", () => {
     await done;
 
     // After the run completes the hub still has the buffered transcript.
-    // The first event is the [drydock] no-git-repo note, then "first", then exit.
+    // The first event is the [drydock] no-git-repo note, then "first", then
+    // a synthesized terminator carrying the overall outcome (the agent's own
+    // exit event is intentionally suppressed — see dispatch.ts).
     const received: AgentEvent[] = [];
     for await (const e of subscribe(runId)) received.push(e);
     expect(received).toHaveLength(3);
     expect(received[0]).toMatchObject({ type: "stdout" });
     expect(received[0].data).toMatch(/not a git repo/);
     expect(received[1]).toEqual({ type: "stdout", data: "first" });
-    expect(received[2]).toEqual({ type: "exit", data: "", code: 0 });
+    expect(received[2]).toEqual({ type: "exit", data: "success", code: 0 });
 
     // And there's exactly one run row for this task.
     expect(listRunsForTask(t.id)).toHaveLength(1);
@@ -381,6 +383,64 @@ describe("dispatchTask", () => {
     expect(run?.gate_status).toBeNull();
   });
 
+  it("streams the gate transcript to subscribers before the verdict line", async () => {
+    const p = createProject({
+      name: "P",
+      path: "/tmp/p",
+      test_command: "npm test",
+    });
+    const t = createTask({
+      project_id: p.id,
+      title: "see gate output",
+      description: "x",
+    });
+    const provider = stubProvider("claude", [
+      { type: "exit", data: "", code: 0 },
+    ]);
+    const gateOutput =
+      "FAIL src/foo.test.ts\n  ✗ foo returns 42\n    expected 41 to be 42";
+    const runQualityGate = async () => ({
+      passed: false,
+      exitCode: 1,
+      output: gateOutput,
+    });
+
+    const { runId, done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: noGit,
+      runQualityGate,
+    });
+    await done;
+
+    const received: AgentEvent[] = [];
+    for await (const e of subscribe(runId)) received.push(e);
+
+    // The full gate transcript shows up live so the user doesn't have to wait
+    // for the run to terminate to learn why the gate failed.
+    const gateEvent = received.find(
+      (e) => (e.type === "stdout" || e.type === "stderr") && e.data === gateOutput,
+    );
+    expect(gateEvent).toBeDefined();
+    expect(gateEvent?.type).toBe("stderr");
+
+    // The 1-line verdict is published *after* the transcript chunk so the UI
+    // shows it as the closing summary.
+    const verdictIdx = received.findIndex(
+      (e) =>
+        (e.type === "stderr" || e.type === "stdout") &&
+        typeof e.data === "string" &&
+        e.data.includes("quality gate failed (exit 1)"),
+    );
+    const gateIdx = received.indexOf(gateEvent!);
+    expect(verdictIdx).toBeGreaterThan(gateIdx);
+
+    // gate_output stays in its dedicated column so the replay route can
+    // surface it under its own header on reconnect.
+    const run = getLatestRunForTask(t.id);
+    expect(run?.gate_output).toBe(gateOutput);
+    expect(run?.gate_status).toBe("failed");
+  });
+
   it("persists usage info when the provider emits a usage event (Phase 3)", async () => {
     const p = createProject({ name: "P", path: "/tmp/p" });
     const t = createTask({
@@ -410,6 +470,149 @@ describe("dispatchTask", () => {
     expect(run?.tokens_in).toBe(100);
     expect(run?.tokens_out).toBe(200);
     expect(run?.cost_usd).toBeCloseTo(0.0042, 6);
+  });
+
+  it("auto-cleans the worktree on success when opted in", async () => {
+    const p = createProject({ name: "P", path: "/tmp/p" });
+    const t = createTask({
+      project_id: p.id,
+      title: "ship it",
+      description: "x",
+    });
+    const provider = stubProvider("claude", [
+      { type: "exit", data: "", code: 0 },
+    ]);
+    const fakePath = "/tmp/drydock-fake-worktree-cleanup";
+    const createWorktree = async (): Promise<CreateWorktreeResult> => ({
+      worktreePath: fakePath,
+      branch: "drydock/abc-task",
+    });
+    const removed: Array<{ projectPath: string; path: string }> = [];
+    const removeWorktree = async (projectPath: string, path: string) => {
+      removed.push({ projectPath, path });
+    };
+
+    const { done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: yesGit,
+      createWorktree,
+      removeWorktree,
+      shouldAutoCleanupWorktree: () => true,
+    });
+    await done;
+
+    expect(removed).toEqual([{ projectPath: "/tmp/p", path: fakePath }]);
+    // Task row clears worktree_path so the UI doesn't link to a deleted dir.
+    // Branch stays — git worktree remove doesn't drop the branch ref.
+    const task = getTask(t.id);
+    expect(task?.worktree_path).toBeNull();
+    expect(task?.branch).toBe("drydock/abc-task");
+    expect(task?.status).toBe<TaskStatus>("done");
+  });
+
+  it("does not clean the worktree when the setting is off", async () => {
+    const p = createProject({ name: "P", path: "/tmp/p" });
+    const t = createTask({
+      project_id: p.id,
+      title: "retain",
+      description: "x",
+    });
+    const provider = stubProvider("claude", [
+      { type: "exit", data: "", code: 0 },
+    ]);
+    const createWorktree = async (): Promise<CreateWorktreeResult> => ({
+      worktreePath: "/tmp/keep-me",
+      branch: "drydock/keep",
+    });
+    let cleanupCalls = 0;
+    const removeWorktree = async () => {
+      cleanupCalls += 1;
+    };
+
+    const { done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: yesGit,
+      createWorktree,
+      removeWorktree,
+      shouldAutoCleanupWorktree: () => false,
+    });
+    await done;
+
+    expect(cleanupCalls).toBe(0);
+    const task = getTask(t.id);
+    expect(task?.worktree_path).toBe("/tmp/keep-me");
+  });
+
+  it("does not auto-clean the worktree on a failed run", async () => {
+    const p = createProject({ name: "P", path: "/tmp/p" });
+    const t = createTask({
+      project_id: p.id,
+      title: "keep for inspection",
+      description: "x",
+    });
+    const provider = stubProvider("claude", [
+      { type: "stderr", data: "agent broke" },
+      { type: "exit", data: "", code: 1 },
+    ]);
+    const createWorktree = async (): Promise<CreateWorktreeResult> => ({
+      worktreePath: "/tmp/keep-failed",
+      branch: "drydock/fail",
+    });
+    let cleanupCalls = 0;
+    const removeWorktree = async () => {
+      cleanupCalls += 1;
+    };
+
+    const { done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: yesGit,
+      createWorktree,
+      removeWorktree,
+      shouldAutoCleanupWorktree: () => true,
+    });
+    await done;
+
+    // Failed runs need their worktree retained so the user can inspect what
+    // the agent half-did before retrying or hand-fixing.
+    expect(cleanupCalls).toBe(0);
+    const task = getTask(t.id);
+    expect(task?.worktree_path).toBe("/tmp/keep-failed");
+    expect(task?.status).toBe<TaskStatus>("failed");
+  });
+
+  it("surfaces cleanup failures as stderr without flipping the run to failed", async () => {
+    const p = createProject({ name: "P", path: "/tmp/p" });
+    const t = createTask({
+      project_id: p.id,
+      title: "cleanup boom",
+      description: "x",
+    });
+    const provider = stubProvider("claude", [
+      { type: "exit", data: "", code: 0 },
+    ]);
+    const createWorktree = async (): Promise<CreateWorktreeResult> => ({
+      worktreePath: "/tmp/cleanup-boom",
+      branch: "drydock/boom",
+    });
+    const removeWorktree = async () => {
+      throw new Error("git refused");
+    };
+
+    const { done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: yesGit,
+      createWorktree,
+      removeWorktree,
+      shouldAutoCleanupWorktree: () => true,
+    });
+    await done;
+
+    const task = getTask(t.id);
+    expect(task?.status).toBe<TaskStatus>("done");
+    // Worktree path stays so the user has a pointer to clean up by hand.
+    expect(task?.worktree_path).toBe("/tmp/cleanup-boom");
+    const run = getLatestRunForTask(t.id);
+    expect(run?.error).toMatch(/worktree cleanup failed: git refused/);
   });
 
   it("falls back to project dir when worktree setup throws", async () => {

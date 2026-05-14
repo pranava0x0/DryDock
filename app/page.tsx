@@ -6,6 +6,7 @@ import type { Project } from "@/lib/db/projects";
 import type { TaskCountsByStatus } from "@/lib/db/tasks";
 import { ProjectCard } from "@/components/ProjectCard";
 import { AddProjectModal } from "@/components/AddProjectModal";
+import { RunningTasksPanel } from "@/components/RunningTasksPanel";
 
 interface ProjectWithCounts extends Project {
   task_counts: TaskCountsByStatus;
@@ -37,6 +38,7 @@ export default function Dashboard() {
 
   return (
     <>
+      <RunningTasksPanel />
       <section>
         <div className="mb-4 flex items-baseline justify-between">
           <h1 className="text-xl font-semibold tracking-tight text-zinc-50">
@@ -54,6 +56,12 @@ export default function Dashboard() {
               className="text-kraken-ice underline-offset-2 transition hover:underline"
             >
               Discover
+            </Link>
+            <Link
+              href="/settings"
+              className="text-kraken-ice underline-offset-2 transition hover:underline"
+            >
+              Settings
             </Link>
             <span className="text-kraken-shadow">
               {loading ? "loading…" : `${projects.length} total`}

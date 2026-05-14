@@ -1,6 +1,7 @@
 import { getTask, updateTask, claimTask } from "../db/tasks";
 import { getProject } from "../db/projects";
 import { createRun, completeRun } from "../db/runs";
+import { getBooleanSetting } from "../db/settings";
 import { getProvider } from "../providers";
 import type { AgentEvent, AgentProvider } from "../providers/types";
 import { buildAgentPrompt } from "./prompt";
@@ -8,10 +9,20 @@ import { publish } from "./hub";
 import {
   createWorktree as defaultCreateWorktree,
   isGitRepo as defaultIsGitRepo,
+  removeWorktree as defaultRemoveWorktree,
   type CreateWorktreeInput,
   type CreateWorktreeResult,
 } from "./worktree";
 import { runQualityGate as defaultRunQualityGate } from "./gate";
+
+/**
+ * Settings key for the opt-in auto-cleanup of worktrees on successful runs.
+ * When `"true"`, the dispatcher removes the per-task worktree after a
+ * successful agent exit (and passing gate, if configured). Defaults to off
+ * because Phase 2 explicitly retains worktrees so the user can inspect
+ * changes and open a PR manually.
+ */
+export const AUTO_CLEANUP_WORKTREE_KEY = "auto_cleanup_worktree";
 
 export interface DispatchResult {
   runId: string;
@@ -77,6 +88,16 @@ export interface DispatchOptions {
     command: string,
     cwd: string,
   ) => Promise<{ passed: boolean; exitCode: number; output: string }>;
+  /**
+   * Override for the worktree teardown call. Tests use it to assert that
+   * auto-cleanup actually fires (or doesn't) on success.
+   */
+  removeWorktree?: (projectPath: string, path: string) => Promise<void>;
+  /**
+   * Override the auto-cleanup decision. Defaults to reading the
+   * `auto_cleanup_worktree` setting from the DB.
+   */
+  shouldAutoCleanupWorktree?: () => boolean;
 }
 
 /**
@@ -128,6 +149,10 @@ export function dispatchTask(
   const isGitRepoFn = options.isGitRepo ?? defaultIsGitRepo;
   const createWorktreeFn = options.createWorktree ?? defaultCreateWorktree;
   const runQualityGateFn = options.runQualityGate ?? defaultRunQualityGate;
+  const removeWorktreeFn = options.removeWorktree ?? defaultRemoveWorktree;
+  const shouldAutoCleanupFn =
+    options.shouldAutoCleanupWorktree ??
+    (() => getBooleanSetting(AUTO_CLEANUP_WORKTREE_KEY, false));
 
   const done = (async () => {
     // Buffer the full output so we can persist it on completion. The SSE
@@ -147,6 +172,10 @@ export function dispatchTask(
     // checkout. For non-git project directories (or if worktree creation
     // fails) we fall back to the project path with a visible note.
     let cwd = project.path;
+    // Tracks the worktree we created (if any) so the auto-cleanup branch
+    // below can call git worktree remove on the same path. Stays null when
+    // the project isn't a git repo or when worktree setup failed.
+    let createdWorktreePath: string | null = null;
     try {
       if (await isGitRepoFn(project.path)) {
         const wt = await createWorktreeFn({
@@ -156,6 +185,7 @@ export function dispatchTask(
           taskTitle: task.title,
         });
         cwd = wt.worktreePath;
+        createdWorktreePath = wt.worktreePath;
         updateTask(taskId, {
           branch: wt.branch,
           worktree_path: wt.worktreePath,
@@ -198,7 +228,15 @@ export function dispatchTask(
       })) {
         if (event.type === "stdout") stdoutLines.push(event.data);
         if (event.type === "stderr") stderrLines.push(event.data);
-        if (event.type === "exit") exitCode = event.code ?? null;
+        if (event.type === "exit") {
+          // Capture the agent's exit code but don't publish it — the hub's
+          // subscribe() iterator terminates on the first `exit` event, so a
+          // publish here would cut off live viewers before they see the
+          // quality-gate transcript or worktree-cleanup notes. We synthesize
+          // a final terminator at the very end of this block.
+          exitCode = event.code ?? null;
+          continue;
+        }
         if (event.type === "usage") {
           tokensIn = event.tokensIn;
           tokensOut = event.tokensOut;
@@ -215,7 +253,6 @@ export function dispatchTask(
         err instanceof Error ? err.message : String(err);
       stderrLines.push(`dispatch error: ${message}`);
       publish(run.id, { type: "stderr", data: `dispatch error: ${message}` });
-      publish(run.id, { type: "exit", data: "", code: -1 });
       exitCode = -1;
     } finally {
       // Quality gate: only run when the agent itself succeeded AND the
@@ -234,6 +271,16 @@ export function dispatchTask(
           const gate = await runQualityGateFn(project.test_command, cwd);
           gateStatus = gate.passed ? "passed" : "failed";
           gateOutput = gate.output;
+          // Stream the captured gate transcript before the verdict so live
+          // viewers can see *why* a gate failed without waiting for the run
+          // to terminate and reopening the panel. The replay path pulls the
+          // same text out of runs.gate_output on reconnect.
+          if (gate.output) {
+            publish(run.id, {
+              type: gate.passed ? "stdout" : "stderr",
+              data: gate.output,
+            });
+          }
           publish(run.id, {
             type: gate.passed ? "stdout" : "stderr",
             data: gate.passed
@@ -259,6 +306,37 @@ export function dispatchTask(
         }
       }
 
+      // Auto-cleanup: when the user has opted in, tear down the worktree
+      // after a clean success so disk usage doesn't grow with every run.
+      // Failures keep the worktree around so the user can still inspect the
+      // agent's half-done changes. The branch survives a `git worktree
+      // remove`, so the user can still `git checkout` it later if needed.
+      if (succeeded && createdWorktreePath && shouldAutoCleanupFn()) {
+        try {
+          await removeWorktreeFn(project.path, createdWorktreePath);
+          updateTask(taskId, { worktree_path: null });
+          publish(run.id, {
+            type: "stdout",
+            data: `[drydock] cleaned up worktree ${createdWorktreePath}`,
+          });
+          stdoutLines.push(
+            `[drydock] cleaned up worktree ${createdWorktreePath}`,
+          );
+        } catch (err) {
+          // Cleanup failure isn't fatal — the run still succeeded. Leave
+          // the worktree on disk and tell the user so they can `git
+          // worktree remove` by hand.
+          const message = err instanceof Error ? err.message : String(err);
+          stderrLines.push(
+            `[drydock] worktree cleanup failed: ${message}`,
+          );
+          publish(run.id, {
+            type: "stderr",
+            data: `[drydock] worktree cleanup failed: ${message}`,
+          });
+        }
+      }
+
       completeRun(run.id, {
         status: succeeded ? "success" : "failed",
         output: stdoutLines.join("\n"),
@@ -270,6 +348,14 @@ export function dispatchTask(
         gate_output: gateOutput,
       });
       updateTask(taskId, { status: succeeded ? "done" : "failed" });
+      // Synthesized terminator: the only `exit` event ever published for
+      // this run. Subscribers (SSE clients) terminate here, having seen the
+      // agent stream, gate transcript, and cleanup notes in order.
+      publish(run.id, {
+        type: "exit",
+        data: succeeded ? "success" : "failed",
+        code: succeeded ? 0 : (exitCode ?? -1),
+      });
       ACTIVE_RUNS.delete(run.id);
     }
   })();

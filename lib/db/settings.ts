@@ -36,3 +36,14 @@ export function getNumberSetting(key: string): number | null {
   const parsed = Number.parseFloat(raw);
   return Number.isFinite(parsed) ? parsed : null;
 }
+
+/**
+ * Read a boolean setting. Only the literal string `"true"` counts as true —
+ * anything else (including legacy garbage from a previous value) is false so
+ * we never silently flip an opt-in behavior on.
+ */
+export function getBooleanSetting(key: string, fallback = false): boolean {
+  const raw = getSetting(key);
+  if (raw === null) return fallback;
+  return raw === "true";
+}

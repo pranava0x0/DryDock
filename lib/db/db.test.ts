@@ -15,6 +15,7 @@ import {
   createTask,
   deleteTask,
   getTask,
+  listInFlightTasks,
   listTasks,
   taskCountsByProject,
   updateTask,
@@ -245,6 +246,53 @@ describe("tasks CRUD", () => {
     expect(reset?.status).toBe("pending");
     expect(reset?.branch).toBeNull();
     expect(reset?.worktree_path).toBeNull();
+  });
+});
+
+describe("listInFlightTasks", () => {
+  it("returns only claimed and running tasks across projects, newest first", () => {
+    const p1 = createProject({ name: "P1", path: "/tmp/p1" });
+    const p2 = createProject({ name: "P2", path: "/tmp/p2" });
+
+    const pending = createTask({
+      project_id: p1.id,
+      title: "pending",
+      description: "x",
+    });
+    const claimed = createTask({
+      project_id: p1.id,
+      title: "claimed",
+      description: "x",
+    });
+    const running = createTask({
+      project_id: p2.id,
+      title: "running",
+      description: "x",
+    });
+    const done = createTask({
+      project_id: p2.id,
+      title: "done",
+      description: "x",
+    });
+
+    claimTask(claimed.id);
+    claimTask(running.id);
+    updateTask(running.id, { status: "running" });
+    updateTask(done.id, { status: "done" });
+
+    const inFlight = listInFlightTasks();
+    const ids = inFlight.map((t) => t.id);
+
+    expect(ids).toContain(claimed.id);
+    expect(ids).toContain(running.id);
+    expect(ids).not.toContain(pending.id);
+    expect(ids).not.toContain(done.id);
+  });
+
+  it("returns an empty array when nothing is in flight", () => {
+    const p = createProject({ name: "Empty", path: "/tmp/empty" });
+    createTask({ project_id: p.id, title: "idle", description: "x" });
+    expect(listInFlightTasks()).toEqual([]);
   });
 });
 
