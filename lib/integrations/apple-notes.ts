@@ -55,6 +55,18 @@ export function lineId(text: string): string {
 }
 
 /**
+ * Trailing ` · added YYYY-MM-DD` suffix the renderer appends so the user
+ * can see when each item entered the backlog. Stripped before computing
+ * `externalId` so the line key stays stable across re-renders (the
+ * timestamp text would otherwise change the hash on every push).
+ */
+const ADDED_SUFFIX_RE = / · added \d{4}-\d{2}-\d{2}$/;
+
+function stripAddedSuffix(text: string): string {
+  return text.replace(ADDED_SUFFIX_RE, "").trim();
+}
+
+/**
  * Parse the body of an Apple Note into a list of backlog lines.
  *
  * We support two formats:
@@ -64,6 +76,10 @@ export function lineId(text: string): string {
  * Everything else is ignored, including blank lines and headings. This
  * keeps the user's preamble / notes in the note from getting promoted
  * to backlog items.
+ *
+ * The renderer's ` · added YYYY-MM-DD` suffix is stripped before the
+ * line is hashed into `externalId` so a push/pull round-trip is stable
+ * even though `created_at` is rendered each time.
  */
 export function parseAppleNote(body: string): AppleNoteLine[] {
   const out: AppleNoteLine[] = [];
@@ -74,7 +90,7 @@ export function parseAppleNote(body: string): AppleNoteLine[] {
     // Checkbox: `- [ ] text` or `- [x] text`.
     const cbMatch = line.match(/^-\s*\[([ xX])\]\s+(.+)$/);
     if (cbMatch) {
-      const text = cbMatch[2].trim();
+      const text = stripAddedSuffix(cbMatch[2]);
       if (text.length === 0) continue;
       out.push({
         externalId: lineId(text),
@@ -87,7 +103,7 @@ export function parseAppleNote(body: string): AppleNoteLine[] {
     // Plain bullet: `- text` (Apple Notes' native bullet rendering).
     const bulletMatch = line.match(/^[-•]\s+(.+)$/);
     if (bulletMatch) {
-      const text = bulletMatch[1].trim();
+      const text = stripAddedSuffix(bulletMatch[1]);
       if (text.length === 0) continue;
       out.push({
         externalId: lineId(text),
@@ -105,17 +121,42 @@ export function parseAppleNote(body: string): AppleNoteLine[] {
  *
  * Header line + blank line gives the user a place to type their own
  * notes without them being parsed as backlog items.
+ *
+ * When `createdAt` is set we append ` · added YYYY-MM-DD` so the user
+ * can see the age of each item in their note. The parser strips this
+ * suffix before computing `externalId`, so re-renders don't mint new
+ * backlog rows on every push.
  */
 export interface RenderableItem {
   title: string;
   status: "idea" | "in_progress" | "done" | "dropped";
+  /** Unix-seconds creation timestamp from `backlog_items.created_at`. */
+  createdAt?: number;
+}
+
+/**
+ * Format a Unix-seconds timestamp as `YYYY-MM-DD` in the host's local
+ * timezone. The host is the user's Mac, so local time is the right frame
+ * — the user thinks about "yesterday" / "Monday" in their own timezone,
+ * not UTC.
+ */
+export function formatAddedDate(unixSec: number): string {
+  const d = new Date(unixSec * 1000);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 export function renderAppleNoteBody(items: RenderableItem[]): string {
   const lines = ["⚓ DryDock Backlog", ""];
   for (const item of items) {
     const checked = item.status === "done";
-    lines.push(`- [${checked ? "x" : " "}] ${item.title}`);
+    const suffix =
+      typeof item.createdAt === "number" && Number.isFinite(item.createdAt)
+        ? ` · added ${formatAddedDate(item.createdAt)}`
+        : "";
+    lines.push(`- [${checked ? "x" : " "}] ${item.title}${suffix}`);
   }
   return lines.join("\n");
 }
@@ -160,19 +201,13 @@ export async function readAppleNote(
 }
 
 /**
- * Create or overwrite a note's body. Uses HTML because Apple Notes
- * stores everything as HTML internally — passing plain text would
- * collapse all our newlines into one paragraph.
+ * Convert our plain-text note body into the minimal HTML Apple Notes
+ * stores internally. Each line becomes a <div>, blank lines become
+ * <div><br></div>, so the round-trip looks identical to natively-typed
+ * content. Exported for tests; not part of the public surface.
  */
-export async function writeAppleNote(
-  title: string,
-  body: string,
-): Promise<void> {
-  const escTitle = asEscape(title);
-  // Convert plain text → minimal HTML. Each line becomes a <div>, blank
-  // lines become <div><br></div>. This mirrors how Apple Notes itself
-  // serializes typed content, so the round-trip looks native.
-  const htmlBody = body
+export function bodyToHtml(body: string): string {
+  return body
     .split("\n")
     .map((line) =>
       line.length === 0
@@ -183,18 +218,55 @@ export async function writeAppleNote(
             .replace(/>/g, "&gt;")}</div>`,
     )
     .join("");
-  const escBody = asEscape(htmlBody);
+}
 
-  const script = `
+/**
+ * Build the AppleScript that finds-or-creates the canonical DryDock note
+ * and replaces its body. Pulled out so we can unit-test the shape of the
+ * script without shelling out — and to make the find/create logic
+ * obvious in one place.
+ *
+ * The old version used `first note whose name is X` inside a try/on-error
+ * block; any transient AppleScript error (a permissions hiccup, an
+ * iCloud-sync race, an account that hadn't loaded yet) would fall through
+ * to the `on error` branch and silently `make new note`. Over time that
+ * left a trail of duplicate "DryDock Backlog" notes in iCloud.
+ *
+ * The new version asks AppleScript for the list of matches and branches
+ * on `count` instead of on error. `make new note` only fires when there
+ * truly is no matching note, never as a fallback for some unrelated
+ * failure.
+ */
+export function buildWriteScript(title: string, htmlBody: string): string {
+  const escTitle = asEscape(title);
+  const escBody = asEscape(htmlBody);
+  return `
     tell application "Notes"
-      try
-        set theNote to first note whose name is "${escTitle}"
-        set body of theNote to "${escBody}"
-      on error
+      set matches to every note whose name is "${escTitle}"
+      if (count of matches) is 0 then
         make new note with properties {name:"${escTitle}", body:"${escBody}"}
-      end try
+      else
+        set body of (item 1 of matches) to "${escBody}"
+      end if
     end tell
   `;
+}
+
+/**
+ * Create or overwrite the canonical DryDock note's body. Uses HTML
+ * because Apple Notes stores everything as HTML internally — passing
+ * plain text would collapse all our newlines into one paragraph.
+ *
+ * If two notes with the same title already exist (e.g. left over from
+ * the previous version's duplicate-create bug), we update the first
+ * match and leave the rest alone. Future cleanup is a manual one-time
+ * task in the Notes app.
+ */
+export async function writeAppleNote(
+  title: string,
+  body: string,
+): Promise<void> {
+  const script = buildWriteScript(title, bodyToHtml(body));
   try {
     await execFileP("osascript", ["-e", script]);
   } catch (err) {

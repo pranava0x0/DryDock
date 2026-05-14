@@ -144,7 +144,11 @@ export async function syncWithAppleNotes(): Promise<SyncStats> {
   const items = listBacklog();
   const renderable = items
     .filter((i) => i.status !== "dropped")
-    .map((i) => ({ title: i.title, status: i.status }));
+    .map((i) => ({
+      title: i.title,
+      status: i.status,
+      createdAt: i.created_at,
+    }));
   await writeAppleNote(title, renderAppleNoteBody(renderable));
 
   return {
@@ -167,7 +171,11 @@ export async function pushToAppleNotesSilently(): Promise<{ ok: boolean; error?:
     const items = listBacklog();
     const renderable = items
       .filter((i) => i.status !== "dropped")
-      .map((i) => ({ title: i.title, status: i.status }));
+      .map((i) => ({
+        title: i.title,
+        status: i.status,
+        createdAt: i.created_at,
+      }));
     await writeAppleNote(title, renderAppleNoteBody(renderable));
     return { ok: true };
   } catch (err) {
