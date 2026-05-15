@@ -11,11 +11,15 @@ import {
   updateBacklogItem,
 } from "../db/backlog";
 import { getTask } from "../db/tasks";
+import { getSetting, setSetting } from "../db/settings";
+import { DEFAULT_NOTE_TITLE } from "../integrations/apple-notes";
 import {
   backlogSummary,
   BurnDownError,
   burnDownBacklogItem,
   dedupeBacklogItems,
+  getNotesTitle,
+  NOTES_TITLE_KEY,
 } from "./backlog";
 
 beforeEach(() => {
@@ -168,6 +172,33 @@ describe("dedupeBacklogItems", () => {
     expect(
       listBacklog().filter((i) => i.title.trim().toLowerCase() === "thrice"),
     ).toHaveLength(1);
+  });
+});
+
+describe("getNotesTitle migration", () => {
+  it("returns the new emoji-prefixed default when nothing is stored", () => {
+    expect(getNotesTitle()).toBe(DEFAULT_NOTE_TITLE);
+    expect(DEFAULT_NOTE_TITLE).toContain("⚓");
+  });
+
+  it("upgrades the legacy 'DryDock Backlog' (no anchor) to the new default in place", () => {
+    // Older installs persisted the no-anchor string. Apple Notes
+    // derives the note's name from the body's first line (which
+    // includes the anchor), so the legacy stored value caused the
+    // by-name fallback to match zero candidates and silently create a
+    // new note on every sync. getNotesTitle migrates the stored value
+    // when it reads it.
+    setSetting(NOTES_TITLE_KEY, "DryDock Backlog");
+    expect(getNotesTitle()).toBe(DEFAULT_NOTE_TITLE);
+    // Persisted, not just transformed on read — second call sees the
+    // upgraded value directly.
+    expect(getSetting(NOTES_TITLE_KEY)).toBe(DEFAULT_NOTE_TITLE);
+  });
+
+  it("leaves a user-customized title alone", () => {
+    setSetting(NOTES_TITLE_KEY, "My Personal Backlog");
+    expect(getNotesTitle()).toBe("My Personal Backlog");
+    expect(getSetting(NOTES_TITLE_KEY)).toBe("My Personal Backlog");
   });
 });
 

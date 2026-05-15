@@ -3,6 +3,7 @@ import {
   bodyToHtml,
   buildReadScript,
   buildWriteScript,
+  DEFAULT_NOTE_TITLE,
   formatAddedDate,
   lineId,
   parseAppleNote,
@@ -84,6 +85,31 @@ describe("renderAppleNoteBody", () => {
     expect(body).toContain("- [x] second");
     // in_progress is treated as un-done in the note ("not yet finished").
     expect(body).toContain("- [ ] third");
+  });
+
+  it("first line equals DEFAULT_NOTE_TITLE so it matches Apple Notes' auto-derived name", () => {
+    // Apple Notes ignores the `name` we pass to `make new note` and
+    // derives the note's name from the body's first non-empty line.
+    // If those two strings diverge, our by-name search (which uses
+    // DEFAULT_NOTE_TITLE) finds zero candidates and the fallback path
+    // creates a fresh note on every sync. Pin them to the same value.
+    const body = renderAppleNoteBody([{ title: "x", status: "idea" }]);
+    expect(body.split("\n")[0]).toBe(DEFAULT_NOTE_TITLE);
+  });
+
+  it("includes the anchor emoji in the default title so iCloud names match", () => {
+    // Regression for the V5 "still creating new notes" bug: by-name
+    // search for "DryDock Backlog" (no anchor) matched 0 of 10
+    // existing notes named "⚓ DryDock Backlog" in iCloud.
+    expect(DEFAULT_NOTE_TITLE).toBe("⚓ DryDock Backlog");
+  });
+
+  it("honors a custom title so a renamed note's body still matches by name", () => {
+    const body = renderAppleNoteBody(
+      [{ title: "x", status: "idea" }],
+      "My Custom Title",
+    );
+    expect(body.split("\n")[0]).toBe("My Custom Title");
   });
 
   it("round-trips: render → parse yields the original titles", () => {

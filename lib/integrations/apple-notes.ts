@@ -31,7 +31,18 @@ const execFileP = promisify(execFile);
  * can edit it natively on iOS without breaking parsing.
  */
 
-export const DEFAULT_NOTE_TITLE = "DryDock Backlog";
+/**
+ * Apple Notes derives a note's `name` from the first non-empty line of
+ * its `body`, regardless of any `name` we pass to `make new note`. Our
+ * rendered body starts with `⚓ DryDock Backlog`, so the actual stored
+ * name carries the anchor — and `every note whose name is "DryDock
+ * Backlog"` (no anchor) matched zero candidates, which is why the
+ * by-name fallback path was minting a new note on every sync where
+ * the stored id wasn't present. The constant now matches Apple's
+ * auto-derived name exactly, keeping the by-name search in lockstep
+ * with what's actually in iCloud.
+ */
+export const DEFAULT_NOTE_TITLE = "⚓ DryDock Backlog";
 
 export interface AppleNoteLine {
   /** Stable hash of the original line text. Used as backlog.external_id. */
@@ -183,8 +194,15 @@ export function formatAddedDate(unixSec: number): string {
   return `${y}-${m}-${day}`;
 }
 
-export function renderAppleNoteBody(items: RenderableItem[]): string {
-  const lines = ["⚓ DryDock Backlog", ""];
+export function renderAppleNoteBody(
+  items: RenderableItem[],
+  title: string = DEFAULT_NOTE_TITLE,
+): string {
+  // The first line becomes the note's `name` in Apple Notes (the app
+  // ignores any `name` we pass to `make new note` and derives it from
+  // the body instead). Use the same string both places so the by-name
+  // search later actually matches.
+  const lines = [title, ""];
   for (const item of items) {
     const checked = item.status === "done";
     const suffix =

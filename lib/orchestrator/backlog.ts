@@ -31,8 +31,25 @@ export const NOTES_TITLE_KEY = "apple_notes_title";
  */
 export const NOTES_NOTE_ID_KEY = "apple_notes_note_id";
 
+/**
+ * One-time migration: prior versions stored the title as
+ * "DryDock Backlog" (without the anchor emoji). Apple Notes derives the
+ * note's `name` from the first line of the body — which is
+ * "⚓ DryDock Backlog" — so the by-name search against the old stored
+ * value never matched anything and the fallback path kept creating new
+ * notes. Upgrade in place so the search lines up with what's actually
+ * in iCloud.
+ */
+const OLD_TITLE_NO_ANCHOR = "DryDock Backlog";
+
 export function getNotesTitle(): string {
-  return getSetting(NOTES_TITLE_KEY) ?? DEFAULT_NOTE_TITLE;
+  const stored = getSetting(NOTES_TITLE_KEY);
+  if (stored === null) return DEFAULT_NOTE_TITLE;
+  if (stored === OLD_TITLE_NO_ANCHOR) {
+    setSetting(NOTES_TITLE_KEY, DEFAULT_NOTE_TITLE);
+    return DEFAULT_NOTE_TITLE;
+  }
+  return stored;
 }
 
 export function setNotesTitle(title: string): void {
@@ -188,7 +205,7 @@ export async function syncWithAppleNotes(): Promise<SyncStats> {
     }));
   const writtenId = await writeAppleNote(
     title,
-    renderAppleNoteBody(renderable),
+    renderAppleNoteBody(renderable, title),
     storedNoteId,
   );
   // Persist the id that the script actually used. On the first sync
@@ -227,7 +244,7 @@ export async function pushToAppleNotesSilently(): Promise<{ ok: boolean; error?:
       }));
     const writtenId = await writeAppleNote(
       title,
-      renderAppleNoteBody(renderable),
+      renderAppleNoteBody(renderable, title),
       storedNoteId,
     );
     if (writtenId && writtenId !== storedNoteId) {
