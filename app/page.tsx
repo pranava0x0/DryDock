@@ -7,6 +7,7 @@ import type { TaskCountsByStatus } from "@/lib/db/tasks";
 import { ProjectCard } from "@/components/ProjectCard";
 import { AddProjectModal } from "@/components/AddProjectModal";
 import { RunningTasksPanel } from "@/components/RunningTasksPanel";
+import { useAutoSync } from "@/components/useAutoSync";
 
 interface ProjectWithCounts extends Project {
   task_counts: TaskCountsByStatus;
@@ -17,6 +18,13 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+
+  // Launch-time sync: fire one Apple Notes round-trip when the
+  // dashboard mounts. No interval — the periodic poll lives on
+  // /backlog where it's more visually relevant. Errors are swallowed
+  // here (no UI surface on the dashboard); the user will see them on
+  // /backlog if they navigate there.
+  useAutoSync();
 
   const refresh = useCallback(async () => {
     try {

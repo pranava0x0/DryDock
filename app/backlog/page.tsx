@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { SyncStatus } from "@/components/SyncStatus";
+import { useAutoSync } from "@/components/useAutoSync";
 
 type BacklogStatus = "idea" | "in_progress" | "done" | "dropped";
 
@@ -49,7 +51,17 @@ export default function BacklogPage() {
   const [newTitle, setNewTitle] = useState("");
   const [newProjectId, setNewProjectId] = useState<string>("");
   const [busy, setBusy] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+
+  // Auto-sync orchestrator: one sync on mount, then every 30s while
+  // the tab is visible. Lets the user add an item directly to the
+  // Apple Note (from their phone or the Notes app) and see it appear
+  // in DryDock without manually clicking anything.
+  const {
+    syncing,
+    lastSyncedAt,
+    error: syncError,
+    triggerSync,
+  } = useAutoSync({ intervalMs: 30_000 });
 
   const refresh = useCallback(async () => {
     try {
@@ -77,6 +89,14 @@ export default function BacklogPage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // After every successful sync, re-fetch the items list so any new
+  // rows pulled from Apple Notes show up without a manual reload.
+  // Guarded on lastSyncedAt so initial renders (when it's still null)
+  // don't fire a redundant fetch right after the mount-time refresh.
+  useEffect(() => {
+    if (lastSyncedAt !== null) void refresh();
+  }, [lastSyncedAt, refresh]);
 
   const projectName = (projectId: string | null): string => {
     if (!projectId) return "Unassigned";
@@ -179,26 +199,12 @@ export default function BacklogPage() {
     }
   };
 
-  const handleSync = async () => {
-    setBusy(true);
-    setSyncStatus("Syncing with Apple Notes…");
-    try {
-      const res = await fetch("/api/backlog/sync", { method: "POST" });
-      const body = await res.json();
-      if (!res.ok) {
-        setSyncStatus(`Sync failed: ${body.error ?? "unknown"}`);
-        return;
-      }
-      const s = body.stats;
-      setSyncStatus(
-        `Synced "${s.notesTitle}": +${s.pulledNew} pulled · ${s.pulledUpdated} updated · ${s.pushedItems} pushed.`,
-      );
-      void refresh();
-    } catch (err) {
-      setSyncStatus(`Sync failed: ${(err as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
+  const handleSync = async (): Promise<void> => {
+    // Defer to the auto-sync hook so its in-flight state, error, and
+    // lastSyncedAt all flow through SyncStatus. The hook's own poll
+    // is paused-as-shared via the server-side mutex — a click while a
+    // poll is mid-flight just awaits the same promise.
+    await triggerSync();
   };
 
   return (
@@ -220,21 +226,22 @@ export default function BacklogPage() {
             Apple Note.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleSync}
-          disabled={busy}
-          className="inline-flex min-h-[44px] items-center rounded-md border border-kraken-boundless px-3 text-sm text-zinc-200 transition hover:bg-kraken-boundless/30 disabled:opacity-50"
-        >
-          ↻ Sync Notes
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            type="button"
+            onClick={() => void handleSync()}
+            disabled={busy || syncing}
+            className="inline-flex min-h-[44px] items-center rounded-md border border-kraken-boundless px-3 text-sm text-zinc-200 transition hover:bg-kraken-boundless/30 disabled:opacity-50"
+          >
+            ↻ Sync Notes
+          </button>
+          <SyncStatus
+            syncing={syncing}
+            lastSyncedAt={lastSyncedAt}
+            error={syncError}
+          />
+        </div>
       </header>
-
-      {syncStatus ? (
-        <p className="mb-3 rounded-md border border-kraken-boundless bg-kraken-surface px-3 py-2 text-xs text-kraken-shadow">
-          {syncStatus}
-        </p>
-      ) : null}
 
       {error ? (
         <p

@@ -11,7 +11,7 @@ import {
 } from "../db/backlog";
 import { createTask } from "../db/tasks";
 import { getProject, listProjects } from "../db/projects";
-import { getSetting, setSetting } from "../db/settings";
+import { getNumberSetting, getSetting, setSetting } from "../db/settings";
 import {
   DEFAULT_NOTE_TITLE,
   parseAppleNote,
@@ -31,6 +31,21 @@ export const NOTES_TITLE_KEY = "apple_notes_title";
  * (note manually deleted, account removed).
  */
 export const NOTES_NOTE_ID_KEY = "apple_notes_note_id";
+/**
+ * Unix-seconds timestamp of the last successful sync (read + write
+ * both completed without throwing). Used by the UI to show "Synced
+ * 30s ago" and by the client-side auto-sync hook to throttle.
+ */
+export const NOTES_LAST_SYNC_KEY = "apple_notes_last_sync_at";
+
+/**
+ * In-process mutex. When a sync is in flight, concurrent callers
+ * (e.g. the /backlog polling timer firing while a manual "Sync Notes"
+ * click is mid-osascript) share the same promise rather than racing
+ * to launch a second AppleScript and stepping on each other's writes.
+ * Cleared in finally so a failed sync doesn't permanently block.
+ */
+let inFlightSync: Promise<SyncStats> | null = null;
 
 /**
  * One-time migration: prior versions stored the title as
@@ -55,6 +70,18 @@ export function getNotesTitle(): string {
 
 export function setNotesTitle(title: string): void {
   setSetting(NOTES_TITLE_KEY, title);
+}
+
+/**
+ * Last successful sync time as Unix seconds, or null if we've never
+ * synced. Used by the UI's SyncStatus badge and the auto-sync hook.
+ */
+export function getLastSyncedAt(): number | null {
+  return getNumberSetting(NOTES_LAST_SYNC_KEY);
+}
+
+function recordSyncedAt(now: number = Math.floor(Date.now() / 1000)): void {
+  setSetting(NOTES_LAST_SYNC_KEY, String(now));
 }
 
 export function getNotesNoteId(): string | null {
@@ -149,8 +176,52 @@ export interface SyncStats {
  * Pull-then-push is the right order: it ensures any edits the user made
  * in Apple Notes survive the round-trip even though the push will
  * re-serialize everything.
+ *
+ * **Conflict resolution rules** (deliberate, documented for future me):
+ *
+ *   - **Add in Notes, not in DB**: pull creates the row.
+ *   - **Add in DB, not in Notes**: push writes the line. Manual rows
+ *     carry external_id = lineId(title) from POST so a future pull
+ *     finds them and doesn't mint a duplicate.
+ *   - **Same item, both sides**: same line key → same row, no-op.
+ *   - **Checked off in Notes**: row promoted to `done`. Irreversible —
+ *     un-checking in Notes does *not* re-open. (Closes the loop; the
+ *     user can re-add the item explicitly via UI if needed.)
+ *   - **Done in UI**: rendered as `[x]` in the note.
+ *   - **Dropped in UI**: excluded from the next push, so it disappears
+ *     from the note. The DB row stays so a history view could surface
+ *     it later.
+ *   - **Line removed from Notes**: ignored — re-added on the next
+ *     push. Notes deletion is one-tap and hard to undo; we don't let
+ *     it nuke backlog state. To actually remove an item, use the UI.
+ *   - **Rename in UI**: title changes; the next pull's by-external_id
+ *     lookup misses (external_id stayed the same, but the rendered
+ *     line's text changed → its lineId differs), then the by-title
+ *     fallback finds the renamed row and re-claims it with the new
+ *     external_id. Round-trips cleanly.
+ *   - **Rename in Notes**: known gap. Pull treats it as a brand-new
+ *     item AND the original (with the unchanged DB title) still
+ *     renders on push, so the rename actually duplicates. Workaround:
+ *     rename via the UI.
+ *
+ * Wrapped in an in-process mutex (`inFlightSync`) so two concurrent
+ * callers (e.g. the /backlog polling timer firing while the user hits
+ * "Sync Notes") share a single AppleScript invocation rather than
+ * racing.
  */
 export async function syncWithAppleNotes(): Promise<SyncStats> {
+  if (inFlightSync) return inFlightSync;
+  inFlightSync = (async () => {
+    try {
+      return await runSyncOnce();
+    } finally {
+      inFlightSync = null;
+    }
+  })();
+  return inFlightSync;
+}
+
+async function runSyncOnce(): Promise<SyncStats> {
   const title = getNotesTitle();
   // Stable id stored from the last successful write. Lets the script
   // hit `note id "..."` directly instead of relying on AppleScript's
@@ -235,6 +306,13 @@ export async function syncWithAppleNotes(): Promise<SyncStats> {
   if (writtenId && writtenId !== storedNoteId) {
     setNotesNoteId(writtenId);
   }
+
+  // Only mark the sync successful here, after both the read and the
+  // write completed without throwing. A partial failure (e.g. read OK
+  // but write blocked by permissions) deliberately leaves the
+  // timestamp unchanged so the UI keeps showing the older "Synced
+  // <when>" value rather than misreporting a half-finished round.
+  recordSyncedAt();
 
   return {
     notesTitle: title,

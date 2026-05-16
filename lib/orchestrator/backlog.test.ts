@@ -18,7 +18,9 @@ import {
   BurnDownError,
   burnDownBacklogItem,
   dedupeBacklogItems,
+  getLastSyncedAt,
   getNotesTitle,
+  NOTES_LAST_SYNC_KEY,
   NOTES_TITLE_KEY,
 } from "./backlog";
 
@@ -199,6 +201,26 @@ describe("getNotesTitle migration", () => {
     setSetting(NOTES_TITLE_KEY, "My Personal Backlog");
     expect(getNotesTitle()).toBe("My Personal Backlog");
     expect(getSetting(NOTES_TITLE_KEY)).toBe("My Personal Backlog");
+  });
+});
+
+describe("getLastSyncedAt", () => {
+  it("returns null before the first sync has been recorded", () => {
+    expect(getLastSyncedAt()).toBeNull();
+  });
+
+  it("reads back the Unix-seconds timestamp persisted on a successful sync", () => {
+    // The orchestrator records this on a successful runSyncOnce; we
+    // simulate it here to verify the getter doesn't lose precision or
+    // misinterpret the string-encoded number.
+    const ts = 1747500000;
+    setSetting(NOTES_LAST_SYNC_KEY, String(ts));
+    expect(getLastSyncedAt()).toBe(ts);
+  });
+
+  it("returns null for a non-numeric value (corrupt setting)", () => {
+    setSetting(NOTES_LAST_SYNC_KEY, "garbage");
+    expect(getLastSyncedAt()).toBeNull();
   });
 });
 

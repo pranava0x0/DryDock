@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import {
+  getLastSyncedAt,
   getNotesTitle,
   setNotesTitle,
   syncWithAppleNotes,
@@ -9,7 +10,13 @@ import { badRequest, ok, serverError } from "@/lib/api/json";
 export const runtime = "nodejs";
 
 export async function GET(): Promise<Response> {
-  return ok({ notesTitle: getNotesTitle() });
+  // Surface last-sync-at so the client-side SyncStatus badge can
+  // render "Synced 30s ago" without firing an actual sync — useful
+  // for pages that don't want to trigger osascript on every mount.
+  return ok({
+    notesTitle: getNotesTitle(),
+    lastSyncedAt: getLastSyncedAt(),
+  });
 }
 
 /**
@@ -37,8 +44,11 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   try {
     const stats = await syncWithAppleNotes();
-    return ok({ stats });
+    return ok({ stats, lastSyncedAt: getLastSyncedAt() });
   } catch (err) {
+    // Sync failure shouldn't crash the page — surface the underlying
+    // osascript / permissions message so the UI can show a small
+    // inline alert while keeping the rest of the backlog usable.
     return serverError((err as Error).message);
   }
 }
