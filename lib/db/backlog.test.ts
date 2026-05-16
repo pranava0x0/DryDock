@@ -9,6 +9,7 @@ import {
   deleteBacklogItem,
   getBacklogItem,
   getBacklogItemByExternalId,
+  getBacklogItemByTitle,
   listBacklog,
   updateBacklogItem,
 } from "./backlog";
@@ -67,6 +68,41 @@ describe("backlog CRUD", () => {
     });
     expect(getBacklogItemByExternalId("abc123")?.title).toBe("from notes");
     expect(getBacklogItemByExternalId("nope")).toBeNull();
+  });
+
+  it("getBacklogItemByTitle matches case-folded trimmed", () => {
+    const item = createBacklogItem({ title: "Refactor auth" });
+    expect(getBacklogItemByTitle("Refactor auth")?.id).toBe(item.id);
+    expect(getBacklogItemByTitle("  refactor AUTH  ")?.id).toBe(item.id);
+    expect(getBacklogItemByTitle("nope")).toBeNull();
+    // Empty / whitespace input is treated as no-match so a malformed
+    // note line doesn't silently grab an unrelated row.
+    expect(getBacklogItemByTitle("   ")).toBeNull();
+  });
+
+  it("getBacklogItemByTitle returns the oldest match for determinism", () => {
+    // Two manual rows with the same title (the bug we're fixing
+    // produces these). The lookup must always return the same one so
+    // a future re-sync's claim doesn't bounce between them.
+    const first = createBacklogItem({ title: "duplicate" });
+    createBacklogItem({ title: "duplicate" });
+    expect(getBacklogItemByTitle("duplicate")?.id).toBe(first.id);
+  });
+
+  it("updateBacklogItem can stamp external_id + promote source on a manual row", () => {
+    // Apple Notes pull "claims" a pre-existing manual row by writing
+    // its line-key into external_id and bumping the source. This is
+    // what avoids the type-in-UI-then-sync-doubles-it bug for rows
+    // created before the POST-stamps-external_id fix.
+    const item = createBacklogItem({ title: "manual original" });
+    expect(item.external_id).toBeNull();
+    expect(item.source).toBe("manual");
+    const claimed = updateBacklogItem(item.id, {
+      external_id: "deadbeef",
+      source: "apple-notes",
+    });
+    expect(claimed?.external_id).toBe("deadbeef");
+    expect(claimed?.source).toBe("apple-notes");
   });
 
   it("honors an explicit created_at when rebuilding history from Apple Notes", () => {

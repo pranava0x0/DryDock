@@ -5,6 +5,7 @@ import {
   createBacklogItem,
   listBacklog,
 } from "@/lib/db/backlog";
+import { lineId } from "@/lib/integrations/apple-notes";
 import { pushToAppleNotesSilently } from "@/lib/orchestrator/backlog";
 import { badRequest, created, ok, serverError } from "@/lib/api/json";
 
@@ -69,6 +70,12 @@ export async function POST(request: NextRequest): Promise<Response> {
       description,
       project_id,
       priority,
+      // Stamp the stable line-key from inception so a subsequent Apple
+      // Notes pull finds this row via getBacklogItemByExternalId and
+      // doesn't mint a second apple-notes-sourced copy of the same
+      // title. Without this, every "type in UI → sync" sequence
+      // doubles the item in the note.
+      external_id: lineId(title),
     });
     // Fire-and-forget Apple Notes push so the note stays in sync without
     // blocking the API. Errors are swallowed inside the helper.

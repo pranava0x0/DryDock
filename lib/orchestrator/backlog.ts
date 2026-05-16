@@ -3,6 +3,7 @@ import {
   deleteBacklogItem,
   getBacklogItem,
   getBacklogItemByExternalId,
+  getBacklogItemByTitle,
   listBacklog,
   updateBacklogItem,
   type BacklogItem,
@@ -173,6 +174,25 @@ export async function syncWithAppleNotes(): Promise<SyncStats> {
           updateBacklogItem(existing.id, { status: "done" });
           pulledUpdated += 1;
         }
+        continue;
+      }
+      // Title-based claim: catches manual rows that were created
+      // before the POST-stamps-external_id fix landed. Without this,
+      // every pre-existing manual item triggers a duplicate on the
+      // next sync because its row has external_id=null and the
+      // by-external_id lookup above misses it. We stamp the row with
+      // the line's external_id (and promote source to apple-notes)
+      // so future syncs find it via the fast path.
+      const sameTitle = getBacklogItemByTitle(line.text);
+      if (sameTitle && sameTitle.external_id === null) {
+        updateBacklogItem(sameTitle.id, {
+          external_id: line.externalId,
+          source: "apple-notes",
+          ...(line.done && sameTitle.status !== "done"
+            ? { status: "done" }
+            : {}),
+        });
+        pulledUpdated += 1;
         continue;
       }
       createBacklogItem({

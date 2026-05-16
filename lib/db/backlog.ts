@@ -53,6 +53,13 @@ export interface UpdateBacklogInput {
   status?: BacklogStatus;
   priority?: number;
   task_id?: string | null;
+  /**
+   * Allow promoting a manual-source row to apple-notes (and stamping
+   * its external_id) when the sync pull finds an existing same-title
+   * row that pre-dates the POST-stamps-external_id fix.
+   */
+  external_id?: string | null;
+  source?: BacklogSource;
 }
 
 export interface ListBacklogFilter {
@@ -109,6 +116,28 @@ export function getBacklogItemByExternalId(
       `SELECT ${SELECT_COLUMNS} FROM backlog_items WHERE external_id = ?`,
     )
     .get(externalId) as BacklogItem | undefined;
+  return row ?? null;
+}
+
+/**
+ * Case-folded, trimmed title lookup. Used by the Apple Notes sync to
+ * claim pre-existing manual rows (external_id IS NULL) that match a
+ * pulled line, instead of minting a second copy under
+ * source='apple-notes'. Returns the oldest match so a future re-sync
+ * is deterministic when duplicates somehow already exist.
+ */
+export function getBacklogItemByTitle(title: string): BacklogItem | null {
+  const normalized = title.trim().toLowerCase();
+  if (normalized.length === 0) return null;
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT ${SELECT_COLUMNS} FROM backlog_items
+       WHERE LOWER(TRIM(title)) = ?
+       ORDER BY created_at ASC
+       LIMIT 1`,
+    )
+    .get(normalized) as BacklogItem | undefined;
   return row ?? null;
 }
 
@@ -196,6 +225,14 @@ export function updateBacklogItem(
   if (patch.task_id !== undefined) {
     fields.push("task_id = ?");
     values.push(patch.task_id);
+  }
+  if (patch.external_id !== undefined) {
+    fields.push("external_id = ?");
+    values.push(patch.external_id);
+  }
+  if (patch.source !== undefined) {
+    fields.push("source = ?");
+    values.push(patch.source);
   }
 
   if (fields.length === 0) return existing;
