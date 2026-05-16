@@ -491,16 +491,6 @@ export default function BacklogPage() {
                         Mark done
                       </button>
                     ) : null}
-                    {item.status !== "dropped" ? (
-                      <button
-                        type="button"
-                        onClick={() => handleStatus(item, "dropped")}
-                        disabled={busy}
-                        className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
-                      >
-                        Drop
-                      </button>
-                    ) : null}
                     <button
                       type="button"
                       onClick={() => startEdit(item)}
@@ -514,11 +504,11 @@ export default function BacklogPage() {
                       type="button"
                       onClick={() => handleDelete(item)}
                       disabled={busy}
-                      className="ml-auto min-h-[36px] rounded-md px-2 text-xs text-zinc-500 transition hover:text-kraken-alert"
+                      className="ml-auto min-h-[36px] rounded-md px-2 text-base text-zinc-500 transition hover:text-kraken-alert"
                       aria-label="Delete item"
-                      title="Hard delete (irreversible). Prefer Drop to keep the record."
+                      title="Delete this item permanently."
                     >
-                      ✕
+                      🗑️
                     </button>
                   </>
                 )}

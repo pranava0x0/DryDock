@@ -88,12 +88,31 @@ Explicit visible focus ring in `globals.css`: `:focus-visible { outline: 2px sol
 - Manifest theme + background colors are both `#001628` (Kraken Deep Sea Blue) — the PWA blends into the dark UI when launched from the home screen.
 - iOS status bar style: `black-translucent` so the Deep Sea Blue page background extends behind the notch.
 
+## In-UI glyph catalog
+
+System-emoji only — no SVG icons, no icon library. Sized via `text-base` (for the trash) / `text-xs` (for inline action buttons).
+
+| Glyph | Where it's used | Meaning |
+|---|---|---|
+| `⚓` | Wordmark, project empty-state, Apple Note body header | Brand mark; "moored, ready to deploy" |
+| `🏗️` | Dashboard empty-state | Shipyard motif; "no projects in drydock yet" |
+| `+` | FAB on dashboard and project pages | Create-new |
+| `✕` | Modal/sheet close buttons (NOT row delete — see 🗑️) | Dismiss |
+| `🔥 Burn down` | `/backlog` row | Promote item to a Pending task in its assigned project. Requires a project. Doesn't auto-Run. |
+| `Mark done` | `/backlog` row | Close-loop a backlog item without creating any task. |
+| `✏️ Edit` | `/backlog` row | Inline edit title + description. Save / Cancel swap in. |
+| `🗑️` | `/backlog` row (right-aligned) | Hard delete (irreversible). The only destructive row-level action — previous "Drop" soft-archive button was removed; `status='dropped'` is now legacy. |
+| `↻ Sync Notes` | `/backlog` header | Manual Apple Notes round-trip. Defers to the same `useAutoSync` orchestrator as the periodic poll. |
+| Pulsing ⬤ + "Syncing…" / "Synced 30s ago" / "⚠ Sync failed" | `/backlog` header under Sync Notes button | `SyncStatus` badge — `text-xs` Kraken Shadow for idle, Kraken Ice pulsing dot for in-flight, Kraken Alert for errors. |
+| `⬤` (pulsing) | `RunningTasksPanel` header on dashboard | In-flight task indicator. Kraken Ice, `animate-pulse`. |
+
 ## Don't list
 
-- Don't add an icon library. The "+" FAB uses a literal `+` character. The ✕ close button uses U+2715. The anchor / crane use Apple system emoji (`⚓` / `🏗️`) so we don't ship raster glyphs.
-- Don't add page-level animation libraries. CSS transitions only.
+- Don't add an icon library. System emoji only.
+- Don't add page-level animation libraries. CSS transitions / Tailwind's `animate-pulse` only.
 - Don't introduce a third provider's accent color (e.g. green for "openai") without expanding this file.
 - Don't render the same content twice in the DOM for mobile vs. desktop. Use responsive utility classes.
 - Don't break the touch-target rule, even for "small" admin actions.
 - Don't use `kraken-alert` for non-failure states. It's a 50-watt signal — reserve it.
 - Don't introduce a third brand motif. Stick with anchor + crane.
+- Don't reintroduce a "Drop" / soft-archive button on `/backlog`. The user explicitly asked for a single destructive action (🗑️). The status enum still has `dropped` for legacy rows but new UI shouldn't surface it.
