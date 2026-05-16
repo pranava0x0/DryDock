@@ -12,12 +12,14 @@ export const runtime = "nodejs";
  * and no local logs, so they always return `null` here — the UI falls
  * back to the deep-link card for those.
  *
- * Cached in-process for 5 minutes. Reading ~128 jsonl files takes ~800ms
- * on a warm SSD; the cache keeps the Settings page snappy without
- * staling user expectations more than the existing 30s budget poll.
+ * Cached in-process for 60 seconds — aligned with the Settings page's
+ * client-side throttle gate (interactions can only trigger a refresh once
+ * per minute). Reading ~128 jsonl files takes ~800ms on a warm SSD; this
+ * keeps disk reads off the hot path of every click/scroll while never
+ * letting the displayed numbers be more than ~60s behind.
  */
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS = 60 * 1000;
 
 let cache: { at: number; data: ProviderBudgetsResponse } | null = null;
 

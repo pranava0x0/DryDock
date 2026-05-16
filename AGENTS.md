@@ -36,7 +36,12 @@ app/
   discover/page.tsx             # Scan ~/Documents/Projects (DRYDOCK_PROJECTS_ROOT) and one-click import
   backlog/page.tsx              # Cross-project backlog. Inline ✏️ Edit, 🗑️ trash.
                                 # useAutoSync({intervalMs: 30_000}) + SyncStatus badge.
-  settings/page.tsx             # Toggles for auto-cleanup worktree (+ future settings)
+  settings/page.tsx             # Auto-cleanup worktree toggle + Provider budgets panel
+                                # (Claude reads live token usage from ~/.claude/projects;
+                                # Codex / Google AI Pro are deep-link-only). The Claude
+                                # card refreshes on mount, click anywhere, scroll
+                                # anywhere, and visibilitychange — throttled to at most
+                                # once / 60s via lib/util/throttle-gate.ts.
   api/
     projects/route.ts           # GET list, POST create
     projects/[id]/route.ts      # GET, PATCH, DELETE
@@ -57,7 +62,8 @@ app/
     backlog/dedupe/route.ts     # POST collapse same-title rows + push consolidated state
     provider-budgets/route.ts   # GET aggregated provider usage (Claude live from session
                                 # logs; Codex/Google return null — no public usage API).
-                                # In-process 5-min cache.
+                                # In-process 60s cache, aligned with the Settings page's
+                                # client-side throttle gate.
 components/
   ProjectCard.tsx, TaskCard.tsx
   AddProjectModal.tsx, AddTaskModal.tsx
@@ -70,6 +76,9 @@ components/
   useAutoSync.ts                # Hook: one-shot on mount + optional interval polling
 lib/
   api/json.ts                   # tiny ok/created/badRequest/notFound helpers
+  util/throttle-gate.ts         # leading-edge throttle gate (closure + injectable
+                                # clock). Used by /settings to keep interaction-
+                                # triggered budget refreshes to at most once / 60s.
   db/index.ts                   # connection singleton, schema apply
   db/projects.ts, tasks.ts, runs.ts
   db/settings.ts                # key/value store + getBooleanSetting helper
