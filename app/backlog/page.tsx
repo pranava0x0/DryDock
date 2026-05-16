@@ -51,6 +51,12 @@ export default function BacklogPage() {
   const [newTitle, setNewTitle] = useState("");
   const [newProjectId, setNewProjectId] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  // Inline-edit state. One row at a time — clicking Edit on a second
+  // row would discard the unsaved buffer of the first, but the layout
+  // keeps both Save and Cancel within easy thumb reach so that's fine.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
 
   // Auto-sync orchestrator: one sync on mount, then every 30s while
   // the tab is visible. Lets the user add an item directly to the
@@ -199,6 +205,48 @@ export default function BacklogPage() {
     }
   };
 
+  const startEdit = (item: BacklogItem) => {
+    setEditingId(item.id);
+    setEditTitle(item.title);
+    setEditDescription(item.description ?? "");
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditTitle("");
+    setEditDescription("");
+  };
+
+  const saveEdit = async (item: BacklogItem) => {
+    const nextTitle = editTitle.trim();
+    if (!nextTitle) {
+      setError("Title can't be empty.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/backlog/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: nextTitle,
+          // Empty input → null so the description row disappears
+          // from the card rather than rendering an empty <p>.
+          description: editDescription.trim() === "" ? null : editDescription,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error ?? "Save failed");
+        return;
+      }
+      cancelEdit();
+      void refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleSync = async (): Promise<void> => {
     // Defer to the auto-sync hook so its in-flight state, error, and
     // lastSyncedAt all flow through SyncStatus. The hook's own poll
@@ -324,100 +372,156 @@ export default function BacklogPage() {
               className="rounded-lg border border-kraken-boundless bg-kraken-surface p-4"
             >
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="text-base font-semibold text-zinc-50">
-                    {item.title}
-                  </h3>
-                  {item.description ? (
-                    <p className="mt-1 text-sm text-zinc-400">
-                      {item.description}
-                    </p>
-                  ) : null}
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-kraken-shadow">
-                    <span className="rounded-full bg-kraken-boundless/40 px-2 py-0.5 text-zinc-300">
-                      {STATUS_LABELS[item.status]}
-                    </span>
-                    <span>
-                      {item.project_id
-                        ? projectName(item.project_id)
-                        : "Unassigned"}
-                    </span>
-                    {item.source === "apple-notes" ? (
-                      <span className="rounded-full border border-yellow-500/40 px-2 py-0.5 text-yellow-300">
-                        from Notes
-                      </span>
-                    ) : null}
-                    {item.task_id ? (
-                      <Link
-                        href={`/project/${item.project_id}`}
-                        className="text-kraken-ice underline-offset-2 hover:underline"
-                      >
-                        task ↗
-                      </Link>
-                    ) : null}
-                  </div>
+                <div className="min-w-0 flex-1">
+                  {editingId === item.id ? (
+                    <div className="flex flex-col gap-2">
+                      <input
+                        type="text"
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        aria-label="Edit title"
+                        className="min-h-[44px] rounded-md border border-kraken-ice/40 bg-kraken-deep px-3 text-base font-semibold text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                        autoFocus
+                      />
+                      <textarea
+                        value={editDescription}
+                        onChange={(e) => setEditDescription(e.target.value)}
+                        aria-label="Edit description"
+                        placeholder="Description (optional)"
+                        rows={2}
+                        className="rounded-md border border-kraken-boundless bg-kraken-deep px-3 py-2 text-sm text-zinc-300 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <h3 className="text-base font-semibold text-zinc-50">
+                        {item.title}
+                      </h3>
+                      {item.description ? (
+                        <p className="mt-1 text-sm text-zinc-400">
+                          {item.description}
+                        </p>
+                      ) : null}
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-kraken-shadow">
+                        <span className="rounded-full bg-kraken-boundless/40 px-2 py-0.5 text-zinc-300">
+                          {STATUS_LABELS[item.status]}
+                        </span>
+                        <span>
+                          {item.project_id
+                            ? projectName(item.project_id)
+                            : "Unassigned"}
+                        </span>
+                        {item.source === "apple-notes" ? (
+                          <span className="rounded-full border border-yellow-500/40 px-2 py-0.5 text-yellow-300">
+                            from Notes
+                          </span>
+                        ) : null}
+                        {item.task_id ? (
+                          <Link
+                            href={`/project/${item.project_id}`}
+                            className="text-kraken-ice underline-offset-2 hover:underline"
+                          >
+                            task ↗
+                          </Link>
+                        ) : null}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <select
-                  value={item.project_id ?? ""}
-                  onChange={(e) => handleAssign(item, e.target.value)}
-                  disabled={busy}
-                  className="min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-2 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
-                  aria-label="Assign project"
-                >
-                  <option value="">Unassigned</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-                {item.status === "idea" ? (
-                  <button
-                    type="button"
-                    onClick={() => handleBurn(item)}
-                    disabled={busy || !item.project_id}
-                    title={
-                      item.project_id
-                        ? "Create a task in the assigned project"
-                        : "Assign a project first"
-                    }
-                    className="min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    🔥 Burn down
-                  </button>
-                ) : null}
-                {item.status !== "done" ? (
-                  <button
-                    type="button"
-                    onClick={() => handleStatus(item, "done")}
-                    disabled={busy}
-                    className="min-h-[36px] rounded-md border border-emerald-500/40 px-3 text-xs text-emerald-300 transition hover:bg-emerald-500/10"
-                  >
-                    Mark done
-                  </button>
-                ) : null}
-                {item.status !== "dropped" ? (
-                  <button
-                    type="button"
-                    onClick={() => handleStatus(item, "dropped")}
-                    disabled={busy}
-                    className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
-                  >
-                    Drop
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => handleDelete(item)}
-                  disabled={busy}
-                  className="ml-auto min-h-[36px] rounded-md px-2 text-xs text-zinc-500 transition hover:text-kraken-alert"
-                  aria-label="Delete item"
-                >
-                  ✕
-                </button>
+                {editingId === item.id ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void saveEdit(item)}
+                      disabled={busy || editTitle.trim() === ""}
+                      className="min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      disabled={busy}
+                      className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <select
+                      value={item.project_id ?? ""}
+                      onChange={(e) => handleAssign(item, e.target.value)}
+                      disabled={busy}
+                      className="min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-2 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                      aria-label="Assign project"
+                    >
+                      <option value="">Unassigned</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    {item.status === "idea" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleBurn(item)}
+                        disabled={busy || !item.project_id}
+                        title={
+                          item.project_id
+                            ? "Create a task in the assigned project"
+                            : "Assign a project first"
+                        }
+                        className="min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        🔥 Burn down
+                      </button>
+                    ) : null}
+                    {item.status !== "done" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleStatus(item, "done")}
+                        disabled={busy}
+                        className="min-h-[36px] rounded-md border border-emerald-500/40 px-3 text-xs text-emerald-300 transition hover:bg-emerald-500/10"
+                      >
+                        Mark done
+                      </button>
+                    ) : null}
+                    {item.status !== "dropped" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleStatus(item, "dropped")}
+                        disabled={busy}
+                        className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
+                      >
+                        Drop
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => startEdit(item)}
+                      disabled={busy}
+                      className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
+                      aria-label="Edit item"
+                    >
+                      ✏️ Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(item)}
+                      disabled={busy}
+                      className="ml-auto min-h-[36px] rounded-md px-2 text-xs text-zinc-500 transition hover:text-kraken-alert"
+                      aria-label="Delete item"
+                      title="Hard delete (irreversible). Prefer Drop to keep the record."
+                    >
+                      ✕
+                    </button>
+                  </>
+                )}
               </div>
             </li>
           ))}

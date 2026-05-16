@@ -18,6 +18,7 @@ import {
   readAppleNote,
   renderAppleNoteBody,
   writeAppleNote,
+  type AppleNoteLine,
 } from "../integrations/apple-notes";
 
 export const NOTES_TITLE_KEY = "apple_notes_title";
@@ -199,10 +200,13 @@ export interface SyncStats {
  *     line's text changed → its lineId differs), then the by-title
  *     fallback finds the renamed row and re-claims it with the new
  *     external_id. Round-trips cleanly.
- *   - **Rename in Notes**: known gap. Pull treats it as a brand-new
- *     item AND the original (with the unchanged DB title) still
- *     renders on push, so the rename actually duplicates. Workaround:
- *     rename via the UI.
+ *   - **Rename in Notes**: detected when the pull has exactly one
+ *     deferred-as-new line AND exactly one apple-notes-sourced DB row
+ *     whose external_id just disappeared from the note. The pair is
+ *     treated as a rename — title + external_id updated in place. If
+ *     the user renamed *and* added in the same window (>1 deferred or
+ *     >1 orphan), we fall back to treating new lines as creates so
+ *     we don't pair the wrong items together. See `applyPulledLines`.
  *
  * Wrapped in an in-process mutex (`inFlightSync`) so two concurrent
  * callers (e.g. the /backlog polling timer firing while the user hits
@@ -221,6 +225,112 @@ export async function syncWithAppleNotes(): Promise<SyncStats> {
   return inFlightSync;
 }
 
+/**
+ * Apply a parsed Apple-Notes pull to the DB. Extracted from
+ * runSyncOnce so the rename heuristic + the existing fast-paths can be
+ * unit-tested without shelling out to osascript.
+ *
+ * Per-line resolution order:
+ *   1. **by external_id**: same line key from a prior sync. Update
+ *      status if the user just checked the box.
+ *   2. **by title (null external_id)**: claim a pre-existing manual
+ *      row that hasn't been stamped yet. Promotes source and stamps
+ *      external_id so the by-external_id path catches it next time.
+ *   3. **defer**: collect lines that didn't match either fast-path.
+ *
+ * Post-loop, the deferred-creates pass is preceded by a
+ * **rename heuristic**: if exactly one DB row is now an "orphan"
+ * (apple-notes-sourced, non-terminal status, has an external_id that
+ * isn't in the current pull) AND exactly one deferred line exists,
+ * treat the pair as a rename in place. This catches the common case
+ * of the user typing a fix into the Notes app between syncs without
+ * inadvertently duplicating the row.
+ *
+ * Multi-edit windows (n orphans, m deferred, n+m > 2) skip the
+ * rename — too ambiguous to pair safely. Those lines become genuinely
+ * new rows; the orphans stay (and get re-pushed on the next round
+ * per the "delete-in-Notes is ignored" rule).
+ */
+export function applyPulledLines(
+  lines: AppleNoteLine[],
+): { pulledNew: number; pulledUpdated: number } {
+  let pulledNew = 0;
+  let pulledUpdated = 0;
+  const deferredCreates: AppleNoteLine[] = [];
+
+  for (const line of lines) {
+    const existing = getBacklogItemByExternalId(line.externalId);
+    if (existing) {
+      // Checked off in Notes → promote DB to done (irreversible —
+      // un-checking in Notes does NOT re-open).
+      if (line.done && existing.status !== "done") {
+        updateBacklogItem(existing.id, { status: "done" });
+        pulledUpdated += 1;
+      }
+      continue;
+    }
+    // Title-claim: a pre-existing manual row with no external_id yet
+    // (created before POST started stamping lineId). Promote it in
+    // place rather than minting a duplicate.
+    const sameTitle = getBacklogItemByTitle(line.text);
+    if (sameTitle && sameTitle.external_id === null) {
+      updateBacklogItem(sameTitle.id, {
+        external_id: line.externalId,
+        source: "apple-notes",
+        ...(line.done && sameTitle.status !== "done"
+          ? { status: "done" }
+          : {}),
+      });
+      pulledUpdated += 1;
+      continue;
+    }
+    deferredCreates.push(line);
+  }
+
+  // Rename heuristic — only applies when the pull is unambiguous.
+  // We look for rows that *used to* be in the note (external_id not
+  // in the current pull's id set) and are still actionable
+  // (idea / in_progress). A 1:1 orphan/deferred pair is treated as
+  // a rename: update the row's title + external_id in place.
+  const currentExternalIds = new Set(lines.map((l) => l.externalId));
+  const orphans = listBacklog().filter(
+    (i) =>
+      i.source === "apple-notes" &&
+      i.external_id !== null &&
+      !currentExternalIds.has(i.external_id) &&
+      (i.status === "idea" || i.status === "in_progress"),
+  );
+  if (orphans.length === 1 && deferredCreates.length === 1) {
+    const orphan = orphans[0];
+    const newLine = deferredCreates[0];
+    updateBacklogItem(orphan.id, {
+      title: newLine.text,
+      external_id: newLine.externalId,
+      ...(newLine.done && orphan.status !== "done"
+        ? { status: "done" }
+        : {}),
+    });
+    pulledUpdated += 1;
+    return { pulledNew, pulledUpdated };
+  }
+
+  // No rename match → every deferred line becomes a fresh row.
+  for (const line of deferredCreates) {
+    createBacklogItem({
+      title: line.text,
+      source: "apple-notes",
+      external_id: line.externalId,
+      status: line.done ? "done" : "idea",
+      // Preserve the `· added YYYY-MM-DD` date so a DB rebuild from
+      // the note doesn't reset every item's history to "today."
+      ...(line.createdAt !== null ? { created_at: line.createdAt } : {}),
+    });
+    pulledNew += 1;
+  }
+
+  return { pulledNew, pulledUpdated };
+}
+
 async function runSyncOnce(): Promise<SyncStats> {
   const title = getNotesTitle();
   // Stable id stored from the last successful write. Lets the script
@@ -235,51 +345,10 @@ async function runSyncOnce(): Promise<SyncStats> {
   const body = await readAppleNote(title, storedNoteId);
   if (body !== null) {
     const lines = parseAppleNote(body);
-    for (const line of lines) {
-      const existing = getBacklogItemByExternalId(line.externalId);
-      if (existing) {
-        // Note: an item checked-off in the note flips DB to "done."
-        // Conversely, un-checking in the note does NOT un-do the item
-        // — irreversible by design (closes the loop).
-        if (line.done && existing.status !== "done") {
-          updateBacklogItem(existing.id, { status: "done" });
-          pulledUpdated += 1;
-        }
-        continue;
-      }
-      // Title-based claim: catches manual rows that were created
-      // before the POST-stamps-external_id fix landed. Without this,
-      // every pre-existing manual item triggers a duplicate on the
-      // next sync because its row has external_id=null and the
-      // by-external_id lookup above misses it. We stamp the row with
-      // the line's external_id (and promote source to apple-notes)
-      // so future syncs find it via the fast path.
-      const sameTitle = getBacklogItemByTitle(line.text);
-      if (sameTitle && sameTitle.external_id === null) {
-        updateBacklogItem(sameTitle.id, {
-          external_id: line.externalId,
-          source: "apple-notes",
-          ...(line.done && sameTitle.status !== "done"
-            ? { status: "done" }
-            : {}),
-        });
-        pulledUpdated += 1;
-        continue;
-      }
-      createBacklogItem({
-        title: line.text,
-        source: "apple-notes",
-        external_id: line.externalId,
-        status: line.done ? "done" : "idea",
-        // Preserve the date in the note's `· added YYYY-MM-DD` suffix
-        // so a DB rebuild from the note doesn't reset every item's
-        // history to "today." Falls back to `unixepoch()` when the
-        // line had no parseable suffix (user-typed bullet with no
-        // suffix yet).
-        ...(line.createdAt !== null ? { created_at: line.createdAt } : {}),
-      });
-      pulledNew += 1;
-    }
+    const { pulledNew: newCount, pulledUpdated: updatedCount } =
+      applyPulledLines(lines);
+    pulledNew = newCount;
+    pulledUpdated = updatedCount;
   }
 
   // Push: render every visible item back to the note. We deliberately

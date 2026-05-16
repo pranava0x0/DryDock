@@ -13,7 +13,9 @@ import {
 import { getTask } from "../db/tasks";
 import { getSetting, setSetting } from "../db/settings";
 import { DEFAULT_NOTE_TITLE } from "../integrations/apple-notes";
+import { lineId, type AppleNoteLine } from "../integrations/apple-notes";
 import {
+  applyPulledLines,
   backlogSummary,
   BurnDownError,
   burnDownBacklogItem,
@@ -23,6 +25,16 @@ import {
   NOTES_LAST_SYNC_KEY,
   NOTES_TITLE_KEY,
 } from "./backlog";
+
+/** Build a parsed-note line for tests. */
+function noteLine(text: string, done = false): AppleNoteLine {
+  return {
+    text,
+    externalId: lineId(text),
+    done,
+    createdAt: null,
+  };
+}
 
 beforeEach(() => {
   _resetDbForTests();
@@ -201,6 +213,102 @@ describe("getNotesTitle migration", () => {
     setSetting(NOTES_TITLE_KEY, "My Personal Backlog");
     expect(getNotesTitle()).toBe("My Personal Backlog");
     expect(getSetting(NOTES_TITLE_KEY)).toBe("My Personal Backlog");
+  });
+});
+
+describe("applyPulledLines (rename heuristic)", () => {
+  it("creates a fresh row when nothing matches", () => {
+    const r = applyPulledLines([noteLine("brand new idea")]);
+    expect(r).toEqual({ pulledNew: 1, pulledUpdated: 0 });
+    expect(listBacklog().map((i) => i.title)).toContain("brand new idea");
+  });
+
+  it("title-claims a pre-existing manual row instead of creating", () => {
+    // Manual row with no external_id (pre-fix data shape).
+    const manual = createBacklogItem({ title: "claim me" });
+    expect(manual.external_id).toBeNull();
+    const r = applyPulledLines([noteLine("claim me")]);
+    expect(r).toEqual({ pulledNew: 0, pulledUpdated: 1 });
+    const after = getBacklogItem(manual.id);
+    expect(after?.external_id).toBe(lineId("claim me"));
+    expect(after?.source).toBe("apple-notes");
+  });
+
+  it("promotes to done when a previously-tracked row is checked in Notes", () => {
+    createBacklogItem({
+      title: "ship it",
+      source: "apple-notes",
+      external_id: lineId("ship it"),
+    });
+    const r = applyPulledLines([noteLine("ship it", true)]);
+    expect(r).toEqual({ pulledNew: 0, pulledUpdated: 1 });
+    expect(
+      listBacklog().find((i) => i.title === "ship it")?.status,
+    ).toBe("done");
+  });
+
+  it("treats a 1:1 orphan/new pair as a rename in place", () => {
+    // Row that *used to* be in the note as "Foo".
+    const orphan = createBacklogItem({
+      title: "Foo",
+      source: "apple-notes",
+      external_id: lineId("Foo"),
+    });
+    // The next pull only sees "Foo (renamed)" — no other changes.
+    const r = applyPulledLines([noteLine("Foo (renamed)")]);
+    expect(r).toEqual({ pulledNew: 0, pulledUpdated: 1 });
+    const after = getBacklogItem(orphan.id);
+    // The same row is repurposed — no second row appears.
+    expect(after?.title).toBe("Foo (renamed)");
+    expect(after?.external_id).toBe(lineId("Foo (renamed)"));
+    expect(listBacklog()).toHaveLength(1);
+  });
+
+  it("does NOT rename when the orphan is in a terminal state (done)", () => {
+    const done = createBacklogItem({
+      title: "Foo",
+      source: "apple-notes",
+      external_id: lineId("Foo"),
+      status: "done",
+    });
+    // 1 new line, but the only orphan is `done` → too risky to pair.
+    // The new line becomes a fresh row instead of clobbering history.
+    const r = applyPulledLines([noteLine("Foo (renamed)")]);
+    expect(r).toEqual({ pulledNew: 1, pulledUpdated: 0 });
+    expect(getBacklogItem(done.id)?.title).toBe("Foo");
+    expect(listBacklog()).toHaveLength(2);
+  });
+
+  it("does NOT rename when the window has multiple ambiguous changes", () => {
+    // Two orphans + one deferred new line → can't safely pair.
+    createBacklogItem({
+      title: "A",
+      source: "apple-notes",
+      external_id: lineId("A"),
+    });
+    createBacklogItem({
+      title: "B",
+      source: "apple-notes",
+      external_id: lineId("B"),
+    });
+    // Pull only sees a new "C" — both A and B vanished from the note.
+    const r = applyPulledLines([noteLine("C")]);
+    expect(r).toEqual({ pulledNew: 1, pulledUpdated: 0 });
+    // Total rows: A, B, C — neither A nor B got renamed to C.
+    expect(listBacklog().map((i) => i.title).sort()).toEqual(["A", "B", "C"]);
+  });
+
+  it("ignores orphans without renaming them when no deferred lines exist", () => {
+    // Line removed from Notes is intentionally ignored per the
+    // "delete-in-Notes is reversed by push" rule. The row stays.
+    const orphan = createBacklogItem({
+      title: "Foo",
+      source: "apple-notes",
+      external_id: lineId("Foo"),
+    });
+    const r = applyPulledLines([]);
+    expect(r).toEqual({ pulledNew: 0, pulledUpdated: 0 });
+    expect(getBacklogItem(orphan.id)?.title).toBe("Foo");
   });
 });
 
