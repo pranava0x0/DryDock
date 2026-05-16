@@ -4,6 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { PROVIDER_BUDGET_LINKS } from "@/lib/providers/budget-links";
 import { createThrottleGate } from "@/lib/util/throttle-gate";
+import { createIdleBackoff } from "@/lib/util/idle-backoff";
+
+// Idle-backoff knobs for the Claude budget refresh. baseMs lines up with
+// the throttle gate's 1/min cap (so a backoff fire never gets blocked at
+// its first attempt). maxMs caps the interval — a tab left idle for
+// hours still refreshes at least once every 30 minutes.
+const IDLE_BACKOFF_BASE_MS = 60_000;
+const IDLE_BACKOFF_MAX_MS = 30 * 60_000;
 
 interface SettingsResponse {
   settings: {
@@ -214,15 +222,36 @@ export default function SettingsPage() {
     maybeRefreshBudgets(false);
   }, [refresh, maybeRefreshBudgets]);
 
-  // Refresh the Claude budget on any interaction with the page (click or
-  // scroll anywhere), and when the tab regains focus after being hidden.
-  // The throttle gate above keeps this to at most once per minute no
-  // matter how many events fire — passive: true on scroll keeps the
-  // listener off the scroll thread.
+  // Refresh the Claude budget on interaction (click/scroll anywhere) and
+  // when the tab regains focus, AND on an exponentially-backing-off idle
+  // ticker for when the user just leaves the page open. Composition:
+  //
+  //   - the throttle gate caps *fetch rate* at 1/min (set above)
+  //   - the backoff decides *when to try* during stretches of no
+  //     interaction: 60s, 120s, 240s, 480s, … 30min cap
+  //   - any user activity calls `backoff.resetAndArm()` so the next idle
+  //     check is back to the 60s baseline — they're active again
+  //
+  // A scroll-heavy session triggers the throttle but the backoff keeps
+  // re-arming at base. A tab left untouched ramps down naturally so a
+  // page open all afternoon doesn't keep hammering disk every minute.
   useEffect(() => {
-    const onInteract = () => maybeRefreshBudgets(true);
+    const backoff = createIdleBackoff({
+      baseMs: IDLE_BACKOFF_BASE_MS,
+      maxMs: IDLE_BACKOFF_MAX_MS,
+      onFire: () => maybeRefreshBudgets(true),
+    });
+    backoff.resetAndArm();
+
+    const onInteract = () => {
+      maybeRefreshBudgets(true);
+      backoff.resetAndArm();
+    };
     const onVisibility = () => {
-      if (document.visibilityState === "visible") maybeRefreshBudgets(true);
+      if (document.visibilityState === "visible") {
+        maybeRefreshBudgets(true);
+        backoff.resetAndArm();
+      }
     };
     // Capture-phase scroll listener: scroll events don't bubble from
     // inner scrollable elements, so capture catches them all from a
@@ -234,6 +263,7 @@ export default function SettingsPage() {
     });
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
+      backoff.teardown();
       document.removeEventListener("click", onInteract);
       document.removeEventListener("scroll", onInteract, { capture: true });
       document.removeEventListener("visibilitychange", onVisibility);

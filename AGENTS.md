@@ -38,10 +38,11 @@ app/
                                 # useAutoSync({intervalMs: 30_000}) + SyncStatus badge.
   settings/page.tsx             # Auto-cleanup worktree toggle + Provider budgets panel
                                 # (Claude reads live token usage from ~/.claude/projects;
-                                # Codex / Google AI Pro are deep-link-only). The Claude
-                                # card refreshes on mount, click anywhere, scroll
-                                # anywhere, and visibilitychange — throttled to at most
-                                # once / 60s via lib/util/throttle-gate.ts.
+                                # Codex / Google AI Pro are deep-link-only). Claude card
+                                # refresh schedule: throttle-gated (≤1/min) interaction
+                                # triggers (mount, click, scroll, visibilitychange) +
+                                # idle-backoff ticker (60s, doubling to 30min cap, reset
+                                # by activity). See lib/util/{throttle-gate,idle-backoff}.
   api/
     projects/route.ts           # GET list, POST create
     projects/[id]/route.ts      # GET, PATCH, DELETE
@@ -79,6 +80,11 @@ lib/
   util/throttle-gate.ts         # leading-edge throttle gate (closure + injectable
                                 # clock). Used by /settings to keep interaction-
                                 # triggered budget refreshes to at most once / 60s.
+  util/idle-backoff.ts          # Exponential-backoff idle ticker. Pairs with the
+                                # throttle gate above — backoff decides *when to
+                                # try*, throttle decides *whether to fetch*.
+                                # resetAndArm() on activity puts the ramp back at
+                                # base (60s) and re-arms.
   db/index.ts                   # connection singleton, schema apply
   db/projects.ts, tasks.ts, runs.ts
   db/settings.ts                # key/value store + getBooleanSetting helper
