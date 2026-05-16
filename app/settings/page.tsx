@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { PROVIDER_BUDGET_LINKS } from "@/lib/providers/budget-links";
+import { createThrottleGate } from "@/lib/util/throttle-gate";
 
 interface SettingsResponse {
   settings: {
@@ -157,6 +158,10 @@ export default function SettingsPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [budgets, setBudgets] = useState<ProviderBudgetsResponse | null>(null);
   const [budgetsLoading, setBudgetsLoading] = useState(true);
+  // Leading-edge throttle gate — first call passes, then closes for 60s.
+  // Held in a ref so the same gate survives every re-render of this page
+  // (a new gate per render would defeat the throttle entirely).
+  const refreshGateRef = useRef(createThrottleGate(60_000));
 
   const refresh = useCallback(async () => {
     try {
@@ -172,24 +177,68 @@ export default function SettingsPage() {
     }
   }, []);
 
-  const refreshBudgets = useCallback(async () => {
-    setBudgetsLoading(true);
-    try {
-      const res = await fetch("/api/provider-budgets");
-      const data: ProviderBudgetsResponse = await res.json();
-      if (res.ok) setBudgets(data);
-    } catch {
-      // Falls back to the deep-link-only card layout. No need to surface
-      // a banner — the Settings page still works for everything else.
-    } finally {
-      setBudgetsLoading(false);
-    }
-  }, []);
+  const refreshBudgets = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      // Initial-load fetches flip the loading flag so the card shows
+      // "reading session logs…". Interaction-triggered refreshes are
+      // silent — data just swaps when it lands, no flicker on every click.
+      if (!options.silent) setBudgetsLoading(true);
+      try {
+        const res = await fetch("/api/provider-budgets");
+        const data: ProviderBudgetsResponse = await res.json();
+        if (res.ok) setBudgets(data);
+      } catch {
+        // Falls back to the deep-link-only card layout. No need to surface
+        // a banner — the Settings page still works for everything else.
+      } finally {
+        if (!options.silent) setBudgetsLoading(false);
+      }
+    },
+    [],
+  );
+
+  // Single chokepoint for every refresh trigger (mount, click, scroll,
+  // tab-becomes-visible). The gate's `check()` returns true at most once
+  // per 60s, so the underlying fetch — and the disk read it implies via
+  // the API's 60s server cache — is naturally rate-limited.
+  const maybeRefreshBudgets = useCallback(
+    (silent: boolean) => {
+      if (!refreshGateRef.current.check()) return;
+      void refreshBudgets({ silent });
+    },
+    [refreshBudgets],
+  );
 
   useEffect(() => {
     void refresh();
-    void refreshBudgets();
-  }, [refresh, refreshBudgets]);
+    maybeRefreshBudgets(false);
+  }, [refresh, maybeRefreshBudgets]);
+
+  // Refresh the Claude budget on any interaction with the page (click or
+  // scroll anywhere), and when the tab regains focus after being hidden.
+  // The throttle gate above keeps this to at most once per minute no
+  // matter how many events fire — passive: true on scroll keeps the
+  // listener off the scroll thread.
+  useEffect(() => {
+    const onInteract = () => maybeRefreshBudgets(true);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") maybeRefreshBudgets(true);
+    };
+    // Capture-phase scroll listener: scroll events don't bubble from
+    // inner scrollable elements, so capture catches them all from a
+    // single document-level handler.
+    document.addEventListener("click", onInteract, { passive: true });
+    document.addEventListener("scroll", onInteract, {
+      passive: true,
+      capture: true,
+    });
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("click", onInteract);
+      document.removeEventListener("scroll", onInteract, { capture: true });
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [maybeRefreshBudgets]);
 
   const handleToggle = async (next: boolean) => {
     setSaving(true);
