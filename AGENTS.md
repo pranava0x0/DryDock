@@ -55,6 +55,9 @@ app/
     backlog/[id]/burn/route.ts  # POST burn item into a task in the linked project
     backlog/sync/route.ts       # GET lastSyncedAt; POST bidirectional Apple Notes sync
     backlog/dedupe/route.ts     # POST collapse same-title rows + push consolidated state
+    provider-budgets/route.ts   # GET aggregated provider usage (Claude live from session
+                                # logs; Codex/Google return null — no public usage API).
+                                # In-process 5-min cache.
 components/
   ProjectCard.tsx, TaskCard.tsx
   AddProjectModal.tsx, AddTaskModal.tsx
@@ -93,6 +96,12 @@ lib/
     spawn.ts                    # shared subprocess + readline wrapper
     claude.ts                   # stream-json provider; flattens text + emits usage
     claude-parse.ts             # pure parser for the stream-json line protocol
+    claude-usage.ts             # Walks ~/.claude/projects/**/*.jsonl and aggregates
+                                # message.usage blocks into weekly (rolling 7d) +
+                                # monthly (calendar) token totals. Powers the live
+                                # Claude card in Settings → Provider budgets.
+    budget-links.ts             # Deep-link targets for Codex / Google AI Pro
+                                # (subscriptions with no public usage API).
     gemini.ts                   # gemini -p subprocess wrapper
     index.ts                    # registry
 docs/
@@ -165,6 +174,7 @@ Documented at length in [lib/orchestrator/backlog.ts](lib/orchestrator/backlog.t
 - Per-task worktrees: `~/.drydock/worktrees/<projectId>/<taskId>/` (Phase 2; kept on success so the user can inspect/PR)
 - Project discovery root: `~/Documents/Projects` by default. Override with `DRYDOCK_PROJECTS_ROOT` env var.
 - Claude OAuth session: `~/.claude/`
+- Claude Code session logs: `~/.claude/projects/<dash-encoded-cwd>/<sessionId>.jsonl` — read (numeric aggregation only, no content) by `lib/providers/claude-usage.ts` for the Settings → Provider budgets Claude card. Never write back.
 - Gemini OAuth session: `~/.gemini/`
 - Cloudflare Tunnel credentials JSON: `~/.cloudflared/<UUID>.json`
 
