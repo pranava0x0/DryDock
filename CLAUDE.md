@@ -8,7 +8,7 @@ This directory is the [DryDock orchestrator](README.md) — all three phases shi
 - **Visual system** (colors, spacing, touch targets, icon set): [design.md](design.md)
 - **Active bugs / fixed bugs**: [issues.md](issues.md) — every Apple Notes failure mode (`-10000`, `-1728`, non-deterministic enumeration, body-vs-name mismatch, add-then-sync duplication) has its own DD-### entry. Cross-reference before touching that code path.
 - **Product backlog** (DryDock-specific): [drydock-backlog.md](drydock-backlog.md). The portfolio-level [`../BACKLOG.md`](../BACKLOG.md) is unrelated cross-project work.
-- **Supply-chain advisory log**: [`../security.md`](../security.md). **Read before any `npm install` / `pip install` / dep upgrade.** Refresh if `Last updated` is >7 days old.
+- **Supply-chain advisory log**: [`pranava0x0/vibe-coding-security`](https://github.com/pranava0x0/vibe-coding-security) (a local `../security.md` was referenced before but doesn't exist; this repo is the live source). **Read before any `npm install` / `pip install` / dep upgrade** — cross-check the lockfile against the relevant `advisories/*.md` and follow `prevention/npm-hardening.md` (install with `npm ci --ignore-scripts`).
 - **Local dev:** `npm run dev` from this directory. The dev launch config is `drydock-dev` in [`../.claude/launch.json`](../.claude/launch.json) — or just type "launch" in a Claude Code session.
 - **Setup checklist** (Cloudflare Tunnel + CLI auth + Apple Notes): [docs/setup.md](docs/setup.md).
 
