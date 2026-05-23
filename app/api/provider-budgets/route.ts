@@ -1,20 +1,28 @@
 import { NextResponse } from "next/server";
 import { readClaudeUsage, type ClaudeUsageReport } from "@/lib/providers/claude-usage";
+import { readGeminiUsage, type GeminiUsageReport } from "@/lib/providers/gemini-usage";
+import { readCodexUsage, type CodexUsageReport } from "@/lib/providers/codex-usage";
 
 export const runtime = "nodejs";
 
 /**
  * GET /api/provider-budgets
  *
- * Returns aggregated usage signals per provider. Today only Claude has a
- * data path (local session jsonls); OpenAI Codex (ChatGPT) and Google AI
- * Pro (gemini.google.com) are subscription-only with no public usage API
- * and no local logs, so they always return `null` here — the UI falls
- * back to the deep-link card for those.
+ * Returns aggregated usage signals per provider:
+ *   - claude: token usage from local Claude Code session jsonls.
+ *   - codex: token usage from local OpenAI Codex CLI rollout jsonls
+ *     (~/.codex/sessions). Zeros until the Codex CLI has been run locally.
+ *   - google: activity counts (not tokens) from local Google Antigravity
+ *     step logs — Google AI Pro / Gemini have no public usage API and
+ *     Antigravity records no token counts, so this is the only local
+ *     signal available.
+ *
+ * Each reader degrades to zeros when its tool has never run locally, so a
+ * card shows "no data yet" rather than erroring.
  *
  * Cached in-process for 60 seconds — aligned with the Settings page's
  * client-side throttle gate (interactions can only trigger a refresh once
- * per minute). Reading ~128 jsonl files takes ~800ms on a warm SSD; this
+ * per minute). Reading the local logs takes up to ~1s on a warm SSD; this
  * keeps disk reads off the hot path of every click/scroll while never
  * letting the displayed numbers be more than ~60s behind.
  */
@@ -25,8 +33,8 @@ let cache: { at: number; data: ProviderBudgetsResponse } | null = null;
 
 interface ProviderBudgetsResponse {
   claude: ClaudeUsageReport | { error: string };
-  codex: null;
-  google: null;
+  codex: CodexUsageReport | { error: string };
+  google: GeminiUsageReport | { error: string };
   cachedAt: string;
 }
 
@@ -36,20 +44,33 @@ export async function GET() {
     return NextResponse.json(cache.data);
   }
 
-  let claude: ClaudeUsageReport | { error: string };
-  try {
-    claude = await readClaudeUsage();
-  } catch (err) {
-    // readClaudeUsage already swallows the common case (no ~/.claude/
-    // projects yet). This catches genuine surprises — surface the error
-    // message rather than 500ing, so the UI degrades to deep-link.
-    claude = { error: (err as Error).message ?? "Failed to read Claude usage" };
-  }
+  // Read all providers concurrently — each swallows its own common
+  // empty-state case (no ~/.claude, ~/.codex, or ~/.gemini yet) and
+  // returns zeros.
+  const [claude, codex, google] = await Promise.all([
+    readClaudeUsage().catch(
+      (err): { error: string } => ({
+        // Genuine surprises only — surface the message rather than 500ing,
+        // so the UI degrades to the deep-link card.
+        error: (err as Error).message ?? "Failed to read Claude usage",
+      }),
+    ),
+    readCodexUsage().catch(
+      (err): { error: string } => ({
+        error: (err as Error).message ?? "Failed to read Codex usage",
+      }),
+    ),
+    readGeminiUsage().catch(
+      (err): { error: string } => ({
+        error: (err as Error).message ?? "Failed to read Google activity",
+      }),
+    ),
+  ]);
 
   const response: ProviderBudgetsResponse = {
     claude,
-    codex: null,
-    google: null,
+    codex,
+    google,
     cachedAt: new Date().toISOString(),
   };
   cache = { at: now, data: response };

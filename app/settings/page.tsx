@@ -36,10 +36,43 @@ interface ClaudeUsageReport {
   generatedAt: string;
 }
 
+interface GeminiActivityWindow {
+  userPrompts: number;
+  modelTurns: number;
+  toolCalls: number;
+  conversations: number;
+}
+
+interface GeminiUsageReport {
+  weekly: GeminiActivityWindow;
+  monthly: GeminiActivityWindow;
+  latestActivityAt: string | null;
+  conversationsScanned: number;
+  generatedAt: string;
+}
+
+interface CodexUsageWindow {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+  sessions: number;
+  turns: number;
+}
+
+interface CodexUsageReport {
+  weekly: CodexUsageWindow;
+  monthly: CodexUsageWindow;
+  latestTurnAt: string | null;
+  filesScanned: number;
+  generatedAt: string;
+}
+
 interface ProviderBudgetsResponse {
   claude: ClaudeUsageReport | { error: string };
-  codex: null;
-  google: null;
+  codex: CodexUsageReport | { error: string };
+  google: GeminiUsageReport | { error: string };
   cachedAt: string;
 }
 
@@ -158,8 +191,204 @@ function UsageWindowBlock({
   );
 }
 
+function GoogleBudgetCard({
+  link,
+  budgets,
+  loading,
+}: {
+  link: (typeof PROVIDER_BUDGET_LINKS)[number];
+  budgets: ProviderBudgetsResponse | null;
+  loading: boolean;
+}) {
+  const google = budgets?.google;
+  const hasError = google !== undefined && "error" in (google ?? {});
+  const report = !hasError && google ? (google as GeminiUsageReport) : null;
+  const hasActivity =
+    report !== null && report.conversationsScanned > 0;
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <span className="block text-sm font-medium text-zinc-100">
+            {link.label}
+          </span>
+          <span className="block text-xs text-kraken-shadow">
+            {loading
+              ? "reading activity logs…"
+              : hasError
+                ? `live read failed · ${link.host}`
+                : hasActivity
+                  ? `local Antigravity activity · ${report!.conversationsScanned} conversation${report!.conversationsScanned === 1 ? "" : "s"} · last turn ${formatLatestTurn(report!.latestActivityAt)}`
+                  : `no local activity · ${link.host}`}
+          </span>
+        </div>
+        <a
+          href={link.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex min-h-[44px] shrink-0 items-center rounded-md border border-kraken-boundless px-3 text-xs font-medium text-kraken-ice transition hover:bg-kraken-boundless/30"
+          aria-label={`Open ${link.label} in a new tab`}
+        >
+          Open ↗
+        </a>
+      </div>
+      {hasActivity ? (
+        <>
+          <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <GeminiActivityBlock
+              label="This week (rolling 7d)"
+              window={report!.weekly}
+            />
+            <GeminiActivityBlock label="This month" window={report!.monthly} />
+          </dl>
+          <p className="mt-2 text-[11px] leading-snug text-kraken-shadow">
+            Activity, not tokens — Google records no token counts locally.
+          </p>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function GeminiActivityBlock({
+  label,
+  window,
+}: {
+  label: string;
+  window: GeminiActivityWindow;
+}) {
+  return (
+    <div className="rounded-md border border-kraken-boundless/40 bg-kraken-deep/60 p-3">
+      <dt className="text-xs uppercase tracking-wide text-kraken-shadow">
+        {label}
+      </dt>
+      <dd className="mt-1 space-y-0.5 text-xs">
+        <div className="flex justify-between gap-2 text-zinc-200">
+          <span className="text-kraken-shadow">prompts</span>
+          <span className="font-mono">{compact.format(window.userPrompts)}</span>
+        </div>
+        <div className="flex justify-between gap-2 text-zinc-200">
+          <span className="text-kraken-shadow">model turns</span>
+          <span className="font-mono">{compact.format(window.modelTurns)}</span>
+        </div>
+        <div className="flex justify-between gap-2 text-zinc-200">
+          <span className="text-kraken-shadow">tool calls</span>
+          <span className="font-mono">{compact.format(window.toolCalls)}</span>
+        </div>
+        <div className="mt-1 flex justify-between gap-2 border-t border-kraken-boundless/30 pt-1 text-zinc-300">
+          <span className="text-kraken-shadow">
+            {window.conversations} conversation
+            {window.conversations === 1 ? "" : "s"}
+          </span>
+        </div>
+      </dd>
+    </div>
+  );
+}
+
+function CodexBudgetCard({
+  link,
+  budgets,
+  loading,
+}: {
+  link: (typeof PROVIDER_BUDGET_LINKS)[number];
+  budgets: ProviderBudgetsResponse | null;
+  loading: boolean;
+}) {
+  const codex = budgets?.codex;
+  const hasError = codex !== undefined && "error" in (codex ?? {});
+  const report = !hasError && codex ? (codex as CodexUsageReport) : null;
+  const hasData = report !== null && report.filesScanned > 0;
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <span className="block text-sm font-medium text-zinc-100">
+            {link.label}
+          </span>
+          <span className="block text-xs text-kraken-shadow">
+            {loading
+              ? "reading session logs…"
+              : hasError
+                ? `live read failed · ${link.host}`
+                : hasData
+                  ? `live from ~/.codex/sessions · ${report!.filesScanned} session log${report!.filesScanned === 1 ? "" : "s"} · last turn ${formatLatestTurn(report!.latestTurnAt)}`
+                  : `no local sessions yet · ${link.host}`}
+          </span>
+        </div>
+        <a
+          href={link.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex min-h-[44px] shrink-0 items-center rounded-md border border-kraken-boundless px-3 text-xs font-medium text-kraken-ice transition hover:bg-kraken-boundless/30"
+          aria-label={`Open ${link.label} usage page in a new tab`}
+        >
+          Open ↗
+        </a>
+      </div>
+      {hasData ? (
+        <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <CodexUsageWindowBlock
+            label="This week (rolling 7d)"
+            window={report!.weekly}
+          />
+          <CodexUsageWindowBlock label="This month" window={report!.monthly} />
+        </dl>
+      ) : null}
+    </>
+  );
+}
+
+function CodexUsageWindowBlock({
+  label,
+  window,
+}: {
+  label: string;
+  window: CodexUsageWindow;
+}) {
+  return (
+    <div className="rounded-md border border-kraken-boundless/40 bg-kraken-deep/60 p-3">
+      <dt className="text-xs uppercase tracking-wide text-kraken-shadow">
+        {label}
+      </dt>
+      <dd className="mt-1 space-y-0.5 text-xs">
+        <div className="flex justify-between gap-2 text-zinc-200">
+          <span className="text-kraken-shadow">in</span>
+          <span className="font-mono">{compact.format(window.inputTokens)}</span>
+        </div>
+        <div className="flex justify-between gap-2 text-zinc-200">
+          <span className="text-kraken-shadow">out</span>
+          <span className="font-mono">{compact.format(window.outputTokens)}</span>
+        </div>
+        <div className="flex justify-between gap-2 text-zinc-200">
+          <span className="text-kraken-shadow">reasoning</span>
+          <span className="font-mono">
+            {compact.format(window.reasoningOutputTokens)}
+          </span>
+        </div>
+        <div className="flex justify-between gap-2 text-zinc-200">
+          <span className="text-kraken-shadow">cached in</span>
+          <span className="font-mono">
+            {compact.format(window.cachedInputTokens)}
+          </span>
+        </div>
+        <div className="mt-1 flex justify-between gap-2 border-t border-kraken-boundless/30 pt-1 text-zinc-300">
+          <span className="text-kraken-shadow">
+            {window.sessions} session{window.sessions === 1 ? "" : "s"}
+          </span>
+          <span className="font-mono">
+            {compact.format(window.turns)} turns
+          </span>
+        </div>
+      </dd>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
-  const [autoCleanup, setAutoCleanup] = useState(false);
+  const [autoCleanup, setAutoCleanup] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -343,8 +572,8 @@ export default function SettingsPage() {
                   Removes the per-task git worktree after the agent succeeds (and
                   the quality gate passes, when configured). The branch itself
                   survives, so you can still <code>git checkout</code> it later.
-                  Off by default — leave it off if you usually inspect agent
-                  changes before merging.
+                  On by default — turn it off if you usually inspect agent
+                  changes in the worktree before merging.
                 </span>
                 {status ? (
                   <span className="mt-2 block text-xs text-kraken-ice">{status}</span>
@@ -358,10 +587,10 @@ export default function SettingsPage() {
               Provider budgets
             </h2>
             <p className="mt-1 text-xs text-kraken-shadow">
-              Claude reads live from your local Claude Code session logs.
-              Google AI Pro and OpenAI Codex subscriptions don&apos;t expose a
-              public usage API, so those stay as deep-links to their own
-              dashboards.
+              Claude and OpenAI Codex read token usage from their local CLI
+              session logs; Google AI shows local Antigravity activity (turns,
+              not tokens). Cards show &ldquo;no data yet&rdquo; for a tool you
+              haven&apos;t run locally.
             </p>
             <ul className="mt-3 space-y-2">
               {PROVIDER_BUDGET_LINKS.map((p) => {
@@ -379,28 +608,30 @@ export default function SettingsPage() {
                     </li>
                   );
                 }
+                if (p.key === "google") {
+                  return (
+                    <li
+                      key={p.key}
+                      className="rounded-md border border-kraken-boundless/60 bg-kraken-surface px-3 py-2"
+                    >
+                      <GoogleBudgetCard
+                        link={p}
+                        budgets={budgets}
+                        loading={budgetsLoading}
+                      />
+                    </li>
+                  );
+                }
                 return (
                   <li
                     key={p.key}
-                    className="flex items-center justify-between gap-3 rounded-md border border-kraken-boundless/60 bg-kraken-surface px-3 py-2"
+                    className="rounded-md border border-kraken-boundless/60 bg-kraken-surface px-3 py-2"
                   >
-                    <div className="min-w-0">
-                      <span className="block text-sm font-medium text-zinc-100">
-                        {p.label}
-                      </span>
-                      <span className="block text-xs text-kraken-shadow">
-                        deep-link only · {p.host}
-                      </span>
-                    </div>
-                    <a
-                      href={p.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex min-h-[44px] shrink-0 items-center rounded-md border border-kraken-boundless px-3 text-xs font-medium text-kraken-ice transition hover:bg-kraken-boundless/30"
-                      aria-label={`Open ${p.label} usage page in a new tab`}
-                    >
-                      Open ↗
-                    </a>
+                    <CodexBudgetCard
+                      link={p}
+                      budgets={budgets}
+                      loading={budgetsLoading}
+                    />
                   </li>
                 );
               })}
