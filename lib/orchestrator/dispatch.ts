@@ -16,11 +16,11 @@ import {
 import { runQualityGate as defaultRunQualityGate } from "./gate";
 
 /**
- * Settings key for the opt-in auto-cleanup of worktrees on successful runs.
- * When `"true"`, the dispatcher removes the per-task worktree after a
- * successful agent exit (and passing gate, if configured). Defaults to off
- * because Phase 2 explicitly retains worktrees so the user can inspect
- * changes and open a PR manually.
+ * Settings key for the auto-cleanup of worktrees on successful runs. When
+ * unset or `"true"`, the dispatcher removes the per-task worktree after a
+ * successful agent exit (and passing gate, if configured). Defaults to ON —
+ * set it to `"false"` to retain worktrees so you can inspect changes and
+ * open a PR manually before cleanup.
  */
 export const AUTO_CLEANUP_WORKTREE_KEY = "auto_cleanup_worktree";
 
@@ -152,7 +152,7 @@ export function dispatchTask(
   const removeWorktreeFn = options.removeWorktree ?? defaultRemoveWorktree;
   const shouldAutoCleanupFn =
     options.shouldAutoCleanupWorktree ??
-    (() => getBooleanSetting(AUTO_CLEANUP_WORKTREE_KEY, false));
+    (() => getBooleanSetting(AUTO_CLEANUP_WORKTREE_KEY, true));
 
   const done = (async () => {
     // Buffer the full output so we can persist it on completion. The SSE
@@ -306,8 +306,8 @@ export function dispatchTask(
         }
       }
 
-      // Auto-cleanup: when the user has opted in, tear down the worktree
-      // after a clean success so disk usage doesn't grow with every run.
+      // Auto-cleanup (on by default): tear down the worktree after a clean
+      // success so disk usage doesn't grow with every run.
       // Failures keep the worktree around so the user can still inspect the
       // agent's half-done changes. The branch survives a `git worktree
       // remove`, so the user can still `git checkout` it later if needed.

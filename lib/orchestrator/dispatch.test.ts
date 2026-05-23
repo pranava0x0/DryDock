@@ -257,6 +257,10 @@ describe("dispatchTask", () => {
       providerFactory: () => provider,
       isGitRepo: yesGit,
       createWorktree,
+      // Pin cleanup off so this test isolates worktree *creation* from the
+      // (now default-on) auto-cleanup, which would null worktree_path. The
+      // cleanup-on/off behaviour has its own dedicated tests below.
+      shouldAutoCleanupWorktree: () => false,
     });
     await done;
 
@@ -472,7 +476,7 @@ describe("dispatchTask", () => {
     expect(run?.cost_usd).toBeCloseTo(0.0042, 6);
   });
 
-  it("auto-cleans the worktree on success when opted in", async () => {
+  it("auto-cleans the worktree on success when enabled", async () => {
     const p = createProject({ name: "P", path: "/tmp/p" });
     const t = createTask({
       project_id: p.id,
