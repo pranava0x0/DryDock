@@ -30,11 +30,11 @@ describe("settings store", () => {
   });
 
   it("getNumberSetting returns null for missing or non-numeric values", () => {
-    expect(getNumberSetting("monthly_budget_usd")).toBeNull();
-    setSetting("monthly_budget_usd", "not a number");
-    expect(getNumberSetting("monthly_budget_usd")).toBeNull();
-    setSetting("monthly_budget_usd", "42.5");
-    expect(getNumberSetting("monthly_budget_usd")).toBeCloseTo(42.5);
+    expect(getNumberSetting("credits_usd")).toBeNull();
+    setSetting("credits_usd", "not a number");
+    expect(getNumberSetting("credits_usd")).toBeNull();
+    setSetting("credits_usd", "42.5");
+    expect(getNumberSetting("credits_usd")).toBeCloseTo(42.5);
   });
 });
 

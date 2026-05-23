@@ -1,9 +1,11 @@
 import type { NextRequest } from "next/server";
 import {
   getBooleanSetting,
+  getNumberSetting,
   setSetting,
 } from "@/lib/db/settings";
 import { AUTO_CLEANUP_WORKTREE_KEY } from "@/lib/orchestrator/dispatch";
+import { CREDITS_KEY } from "@/lib/budget/window";
 import { badRequest, ok, serverError } from "@/lib/api/json";
 
 export const runtime = "nodejs";
@@ -14,7 +16,7 @@ export const runtime = "nodejs";
  * external input. Keeps the rest of the app from having to guard against
  * raw `setSetting(key, value)` calls with arbitrary keys.
  */
-type SettingShape = "boolean";
+type SettingShape = "boolean" | "number";
 
 interface WritableSetting {
   shape: SettingShape;
@@ -24,7 +26,12 @@ interface WritableSetting {
 const WRITABLE: Record<string, WritableSetting> = {
   [AUTO_CLEANUP_WORKTREE_KEY]: {
     shape: "boolean",
-    read: () => getBooleanSetting(AUTO_CLEANUP_WORKTREE_KEY, false),
+    read: () => getBooleanSetting(AUTO_CLEANUP_WORKTREE_KEY, true),
+  },
+  // Optional, manually-entered API credit balance (USD). null when unset.
+  [CREDITS_KEY]: {
+    shape: "number",
+    read: () => getNumberSetting(CREDITS_KEY),
   },
 };
 
@@ -66,6 +73,16 @@ export async function PUT(request: NextRequest): Promise<Response> {
         return badRequest(`Setting \`${key}\` must be a boolean`);
       }
       setSetting(key, value ? "true" : "false");
+    } else if (entry.shape === "number") {
+      if (value === null) {
+        setSetting(key, ""); // clears it — getNumberSetting reads "" as null
+      } else if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+        setSetting(key, String(value));
+      } else {
+        return badRequest(
+          `Setting \`${key}\` must be a non-negative number or null`,
+        );
+      }
     }
   }
 

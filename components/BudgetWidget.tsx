@@ -1,186 +1,197 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-
-interface BudgetRollup {
-  periodStart: string;
-  periodEnd: string;
-  budgetUsd: number | null;
-  spentUsd: number;
-  remainingUsd: number | null;
-  percentUsed: number | null;
-  thresholdReached: 50 | 80 | 100 | null;
-  lastAlertedPct: number | null;
-}
+import { useCallback, useEffect, useState } from "react";
+import {
+  CREDITS_KEY,
+  currentUsageWindow,
+  formatCountdown,
+} from "@/lib/budget/window";
 
 /**
- * Header pill + banner combo for the monthly budget.
+ * Header summary pill for usage across all services in the current window
+ * (calendar month). Shows combined tokens (Claude + Codex) and the time
+ * until the window resets; clicking opens a per-service breakdown with the
+ * window-elapsed percentage and an optional manual API-credits balance.
  *
- * Polls /api/budget every 30s so the rollup stays fresh without being
- * chatty. When `thresholdReached` outranks `lastAlertedPct`, it:
- *   1. shows an in-page banner (always),
- *   2. fires a browser Notification if the user has granted permission
- *      (free, no service worker required as long as the page is open),
- *   3. PUTs `acked_pct` back to the server so we won't re-alert.
+ * Data comes from /api/provider-budgets (the same cached reader the
+ * Settings cards use) so the header and the cards always agree. Window
+ * timing is computed client-side from a ticking clock so the countdown
+ * stays live without polling. Google reports activity (turns), not tokens,
+ * so it's shown in the breakdown but excluded from the token total.
  *
- * Why this design is the cheapest viable option: no third-party service,
- * no email, no SMS, no push subscription. The user has to have DryDock
- * open in a tab (or as a PWA) to see the alert — that's fine because
- * the dashboard is where they manage tasks anyway.
+ * The widget never throws on a per-provider read error — it's mounted in
+ * the global header, so a failed read just contributes zero rather than
+ * blanking every page.
  */
+
+interface ClaudeWindow {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+}
+
+interface CodexWindow {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+}
+
+interface GeminiWindow {
+  modelTurns: number;
+}
+
+type Report<T> = { monthly: T } | { error: string };
+
+interface ProviderBudgetsResponse {
+  claude: Report<ClaudeWindow>;
+  codex: Report<CodexWindow>;
+  google: Report<GeminiWindow>;
+}
+
+const compact = new Intl.NumberFormat(undefined, {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+function monthly<T>(report: Report<T> | undefined): T | null {
+  if (!report || "error" in report) return null;
+  return report.monthly;
+}
+
+function claudeTokens(w: ClaudeWindow | null): number {
+  if (!w) return 0;
+  return (
+    w.inputTokens +
+    w.outputTokens +
+    w.cacheCreationInputTokens +
+    w.cacheReadInputTokens
+  );
+}
+
+function codexTokens(w: CodexWindow | null): number {
+  if (!w) return 0;
+  return (
+    w.inputTokens + w.cachedInputTokens + w.outputTokens + w.reasoningOutputTokens
+  );
+}
+
 export function BudgetWidget() {
-  const [rollup, setRollup] = useState<BudgetRollup | null>(null);
+  const [budgets, setBudgets] = useState<ProviderBudgetsResponse | null>(null);
+  const [credits, setCredits] = useState<number | null>(null);
+  const [now, setNow] = useState<Date>(() => new Date());
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-  // Tracks the threshold we've already fired a Notification for in THIS
-  // tab, so we don't re-notify on every poll while waiting for the user
-  // to ack on the server side.
-  const notifiedRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/budget");
-      const data = await res.json();
-      if (res.ok) setRollup(data.budget);
+      const [pbRes, sRes] = await Promise.all([
+        fetch("/api/provider-budgets"),
+        fetch("/api/settings"),
+      ]);
+      if (pbRes.ok) setBudgets(await pbRes.json());
+      if (sRes.ok) {
+        const data = await sRes.json();
+        const c = data?.settings?.[CREDITS_KEY];
+        setCredits(typeof c === "number" ? c : null);
+      }
     } catch {
-      // ignore — next poll will retry
+      // keep last good values — next poll retries
     }
   }, []);
 
+  // Poll provider budgets every 60s (the API caches for 60s server-side).
   useEffect(() => {
     void refresh();
-    const t = setInterval(() => void refresh(), 30_000);
+    const t = setInterval(() => void refresh(), 60_000);
     return () => clearInterval(t);
   }, [refresh]);
 
+  // Tick the clock every 30s so the countdown + elapsed bar stay live
+  // without re-fetching anything.
   useEffect(() => {
-    if (!rollup) return;
-    const t = rollup.thresholdReached;
-    if (t === null) return;
-    if ((rollup.lastAlertedPct ?? 0) >= t) return; // already alerted server-side
-    if (notifiedRef.current === t) return; // already alerted in this tab
-    notifiedRef.current = t;
+    const t = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
-    // Best-effort browser notification. Permission may be 'default'
-    // (we haven't asked yet) — in that case the banner still appears.
-    if (
-      typeof window !== "undefined" &&
-      "Notification" in window &&
-      Notification.permission === "granted"
-    ) {
-      try {
-        new Notification(`⚓ DryDock budget`, {
-          body: `You've used ${rollup.percentUsed?.toFixed(1)}% of your $${rollup.budgetUsd?.toFixed(2)} monthly budget.`,
-          tag: `drydock-budget-${t}`,
-        });
-      } catch {
-        // some browsers throw when constructed without a service worker
-      }
-    }
+  if (!budgets) return null;
 
-    void fetch("/api/budget", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ acked_pct: t }),
-    });
-  }, [rollup]);
+  const claude = monthly(budgets.claude);
+  const codex = monthly(budgets.codex);
+  const google = monthly(budgets.google);
+  const cTok = claudeTokens(claude);
+  const xTok = codexTokens(codex);
+  const totalTok = cTok + xTok;
+  const win = currentUsageWindow(now);
+  const monthLabel = new Date(win.startISO).toLocaleString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+  const resetLabel = new Date(win.endISO).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 
-  const handleSave = async () => {
+  const handleSaveCredits = async () => {
     setBusy(true);
     try {
       const parsed = draft.trim() === "" ? null : Number.parseFloat(draft);
-      const res = await fetch("/api/budget", {
+      if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
+        setBusy(false);
+        return;
+      }
+      const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ budget_usd: parsed }),
+        body: JSON.stringify({ [CREDITS_KEY]: parsed }),
       });
-      const data = await res.json();
       if (res.ok) {
-        setRollup(data.budget);
+        const data = await res.json();
+        const c = data?.settings?.[CREDITS_KEY];
+        setCredits(typeof c === "number" ? c : null);
         setEditing(false);
-        // Ask permission as a side effect of saving — feels natural
-        // ("you set a budget; want a heads-up when you near it?").
-        if (
-          typeof window !== "undefined" &&
-          "Notification" in window &&
-          Notification.permission === "default"
-        ) {
-          void Notification.requestPermission();
-        }
       }
     } finally {
       setBusy(false);
     }
   };
 
-  if (!rollup) return null;
-
-  const showBanner =
-    rollup.thresholdReached !== null && !dismissed;
-
   return (
     <>
       <button
         type="button"
         onClick={() => {
-          setDraft(rollup.budgetUsd?.toString() ?? "");
+          setDraft(credits?.toString() ?? "");
           setEditing(true);
         }}
         className="hidden items-center gap-2 rounded-full border border-kraken-boundless bg-kraken-surface px-3 py-1 text-xs text-zinc-200 transition hover:border-kraken-ice/60 sm:inline-flex"
-        aria-label="Edit monthly budget"
+        aria-label={`Usage this window: ${compact.format(totalTok)} tokens, resets in ${formatCountdown(win.secondsUntilReset)}`}
       >
-        <span className="text-kraken-shadow">$</span>
-        <span className="font-mono">{rollup.spentUsd.toFixed(2)}</span>
-        <span className="text-kraken-shadow">
-          / {rollup.budgetUsd !== null ? rollup.budgetUsd.toFixed(0) : "set"}
+        <span className="font-mono">{compact.format(totalTok)}</span>
+        <span className="text-kraken-shadow">tok</span>
+        <span className="text-kraken-boundless">·</span>
+        <span className="text-kraken-ice">
+          {formatCountdown(win.secondsUntilReset)} left
         </span>
-        {rollup.percentUsed !== null ? (
-          <span
-            className={
-              rollup.percentUsed >= 100
-                ? "text-kraken-alert"
-                : rollup.percentUsed >= 80
-                  ? "text-amber-300"
-                  : "text-kraken-ice"
-            }
-          >
-            {rollup.percentUsed.toFixed(0)}%
-          </span>
+        {credits !== null ? (
+          <>
+            <span className="text-kraken-boundless">·</span>
+            <span className="font-mono text-emerald-300">
+              ${credits.toFixed(2)}
+            </span>
+            <span className="text-kraken-shadow">cr</span>
+          </>
         ) : null}
       </button>
-
-      {showBanner ? (
-        <div
-          className={`mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm ${
-            rollup.thresholdReached === 100
-              ? "border-kraken-alert/40 bg-kraken-alert/10 text-kraken-alert"
-              : "border-amber-500/40 bg-amber-500/10 text-amber-300"
-          }`}
-          role="alert"
-        >
-          <span>
-            {rollup.thresholdReached === 100
-              ? `Over budget — $${rollup.spentUsd.toFixed(2)} of $${rollup.budgetUsd?.toFixed(2)} used this month.`
-              : `${rollup.thresholdReached}% of monthly budget used ($${rollup.spentUsd.toFixed(2)} / $${rollup.budgetUsd?.toFixed(2)}).`}
-          </span>
-          <button
-            type="button"
-            onClick={() => setDismissed(true)}
-            className="text-xs underline-offset-2 hover:underline"
-          >
-            dismiss
-          </button>
-        </div>
-      ) : null}
 
       {editing ? (
         <div
           className="fixed inset-0 z-20 flex items-end justify-center bg-black/60 sm:items-center"
           role="dialog"
           aria-modal="true"
-          aria-label="Set monthly budget"
+          aria-label="Usage this window"
           onClick={() => !busy && setEditing(false)}
         >
           <div
@@ -188,14 +199,62 @@ export function BudgetWidget() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold text-zinc-50">
-              Monthly budget
+              Usage this window
             </h2>
             <p className="mt-1 text-sm text-kraken-shadow">
-              Sum of agent run costs this calendar month. Leave blank to
-              clear; DryDock will still track spend.
+              {monthLabel} · resets {resetLabel} (in{" "}
+              {formatCountdown(win.secondsUntilReset)})
             </p>
+
+            {/* Window-elapsed progress */}
+            <div className="mt-3">
+              <div className="flex justify-between text-xs text-kraken-shadow">
+                <span>{win.elapsedPct.toFixed(0)}% through this window</span>
+                <span>{formatCountdown(win.secondsUntilReset)} left</span>
+              </div>
+              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-kraken-deep">
+                <div
+                  className="h-full rounded-full bg-kraken-ice"
+                  style={{ width: `${win.elapsedPct}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Per-service breakdown */}
+            <dl className="mt-4 space-y-1 text-sm">
+              <BreakdownRow
+                label="Claude"
+                value={claude ? `${compact.format(cTok)} tokens` : "—"}
+              />
+              <BreakdownRow
+                label="OpenAI Codex"
+                value={codex ? `${compact.format(xTok)} tokens` : "—"}
+              />
+              <BreakdownRow
+                label="Google AI"
+                value={
+                  google
+                    ? `${compact.format(google.modelTurns)} turns`
+                    : "—"
+                }
+                muted
+              />
+              <div className="my-1 border-t border-kraken-boundless/40" />
+              <BreakdownRow
+                label="Total tokens"
+                value={compact.format(totalTok)}
+                strong
+              />
+            </dl>
+            <p className="mt-1 text-[11px] leading-snug text-kraken-shadow">
+              Tokens are Claude + Codex (all categories). Google reports
+              activity, not tokens. Full breakdown in Settings → Provider
+              budgets.
+            </p>
+
+            {/* Optional manual API credits */}
             <label className="mt-4 block text-sm">
-              <span className="text-zinc-300">Budget (USD)</span>
+              <span className="text-zinc-300">API credits (USD)</span>
               <input
                 type="number"
                 inputMode="decimal"
@@ -203,10 +262,15 @@ export function BudgetWidget() {
                 min="0"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="50"
+                placeholder="none"
                 className="mt-1 block w-full min-h-[44px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 font-mono text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
               />
+              <span className="mt-1 block text-[11px] text-kraken-shadow">
+                Prepaid API balance, entered by hand (there&apos;s no usage
+                API to read it). Leave blank to hide.
+              </span>
             </label>
+
             <div className="mt-4 flex gap-2">
               <button
                 type="button"
@@ -214,20 +278,49 @@ export function BudgetWidget() {
                 disabled={busy}
                 className="flex-1 min-h-[44px] rounded-md border border-kraken-boundless px-3 text-sm font-medium text-zinc-200 transition hover:bg-kraken-boundless/30"
               >
-                Cancel
+                Close
               </button>
               <button
                 type="button"
-                onClick={handleSave}
+                onClick={handleSaveCredits}
                 disabled={busy}
                 className="flex-1 min-h-[44px] rounded-md bg-kraken-ice px-3 text-sm font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {busy ? "Saving…" : "Save"}
+                {busy ? "Saving…" : "Save credits"}
               </button>
             </div>
           </div>
         </div>
       ) : null}
     </>
+  );
+}
+
+function BreakdownRow({
+  label,
+  value,
+  muted,
+  strong,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+  strong?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <dt className={muted ? "text-kraken-shadow" : "text-zinc-300"}>
+        {label}
+      </dt>
+      <dd
+        className={
+          strong
+            ? "font-mono font-semibold text-zinc-50"
+            : "font-mono text-zinc-200"
+        }
+      >
+        {value}
+      </dd>
+    </div>
   );
 }
