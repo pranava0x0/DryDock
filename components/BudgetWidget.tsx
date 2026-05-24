@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   CREDITS_KEY,
   currentUsageWindow,
@@ -166,7 +167,7 @@ export function BudgetWidget() {
           setDraft(credits?.toString() ?? "");
           setEditing(true);
         }}
-        className="hidden items-center gap-2 rounded-full border border-kraken-boundless bg-kraken-surface px-3 py-1 text-xs text-zinc-200 transition hover:border-kraken-ice/60 sm:inline-flex"
+        className="inline-flex items-center gap-2 rounded-full border border-kraken-boundless bg-kraken-surface px-3 py-1 text-xs text-zinc-200 transition hover:border-kraken-ice/60"
         aria-label={`Usage this window: ${compact.format(totalTok)} tokens, resets in ${formatCountdown(win.secondsUntilReset)}`}
       >
         <span className="font-mono">{compact.format(totalTok)}</span>
@@ -186,16 +187,16 @@ export function BudgetWidget() {
         ) : null}
       </button>
 
-      {editing ? (
+      {editing && typeof document !== "undefined" ? createPortal(
         <div
-          className="fixed inset-0 z-20 flex items-end justify-center bg-black/60 sm:items-center"
+          className="fixed inset-0 z-20 flex items-end justify-center bg-black/60 sm:items-center sm:py-6"
           role="dialog"
           aria-modal="true"
           aria-label="Usage this window"
           onClick={() => !busy && setEditing(false)}
         >
           <div
-            className="w-full max-w-sm rounded-t-2xl border border-kraken-boundless bg-kraken-surface p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:rounded-2xl"
+            className="w-full max-w-sm overflow-y-auto rounded-t-2xl border border-kraken-boundless bg-kraken-surface p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:rounded-2xl max-h-[90vh]"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold text-zinc-50">
@@ -290,7 +291,8 @@ export function BudgetWidget() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </>
   );
