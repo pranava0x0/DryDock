@@ -152,6 +152,13 @@ export function BudgetWidget() {
     month: "short",
     day: "numeric",
   });
+  const totalDays = Math.round(
+    (new Date(win.endISO).getTime() - new Date(win.startISO).getTime()) / 86400000,
+  );
+  const elapsedDays = Math.min(
+    totalDays,
+    Math.max(0, Math.floor((now.getTime() - new Date(win.startISO).getTime()) / 86400000)),
+  );
 
   const handleSaveCredits = async () => {
     setBusy(true);
@@ -186,21 +193,15 @@ export function BudgetWidget() {
           setEditing(true);
         }}
         className="inline-flex items-center gap-2 rounded-full border border-kraken-boundless bg-kraken-surface px-3 py-1 text-xs text-zinc-200 transition hover:border-kraken-ice/60"
-        aria-label={`Usage this window: ${compact.format(totalTok)} tokens, resets in ${formatCountdown(win.secondsUntilReset)}`}
+        aria-label={`${win.elapsedPct.toFixed(0)}% of ${monthLabel} elapsed, ${formatCountdown(win.secondsUntilReset)} left, ${compact.format(totalTok)} tokens used`}
       >
-        <span className="font-mono">{compact.format(totalTok)}</span>
-        <span className="text-kraken-shadow">tok</span>
+        <span className="font-mono text-zinc-100">{win.elapsedPct.toFixed(0)}%</span>
         <span className="text-kraken-boundless">·</span>
-        <span className="text-kraken-ice">
-          {formatCountdown(win.secondsUntilReset)} left
-        </span>
+        <span className="text-kraken-ice">{formatCountdown(win.secondsUntilReset)} left</span>
         {credits !== null ? (
           <>
             <span className="text-kraken-boundless">·</span>
-            <span className="font-mono text-emerald-300">
-              ${credits.toFixed(2)}
-            </span>
-            <span className="text-kraken-shadow">cr</span>
+            <span className="font-mono text-emerald-300">${credits.toFixed(2)}</span>
           </>
         ) : null}
       </button>
@@ -228,7 +229,7 @@ export function BudgetWidget() {
             {/* Window-elapsed progress */}
             <div className="mt-3">
               <div className="flex justify-between text-xs text-kraken-shadow">
-                <span>{win.elapsedPct.toFixed(0)}% through this window</span>
+                <span>{win.elapsedPct.toFixed(0)}% elapsed</span>
                 <span>{formatCountdown(win.secondsUntilReset)} left</span>
               </div>
               <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-kraken-deep">
@@ -237,6 +238,9 @@ export function BudgetWidget() {
                   style={{ width: `${win.elapsedPct}%` }}
                 />
               </div>
+              <p className="mt-1 text-[11px] text-kraken-shadow">
+                {elapsedDays} of {totalDays} days in {monthLabel} · resets {resetLabel}
+              </p>
             </div>
 
             {/* 5h session window */}
@@ -282,8 +286,10 @@ export function BudgetWidget() {
               />
             </dl>
             <p className="mt-1 text-[11px] leading-snug text-kraken-shadow">
-              Monthly: Claude + Codex tokens (all categories). Google reports
-              activity, not tokens.
+              Total = Claude (input + output + cache&nbsp;create + cache&nbsp;read)
+              + Codex (input + cached&nbsp;in + output + reasoning). Google
+              reports conversation turns, not tokens — excluded from total.
+              All counts from local CLI session logs, calendar-month window.
             </p>
 
             {/* Optional manual API credits */}

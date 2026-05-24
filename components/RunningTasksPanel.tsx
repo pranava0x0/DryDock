@@ -83,18 +83,9 @@ export function RunningTasksPanel() {
     return () => clearInterval(tick);
   }, []);
 
-  // Collapse the panel entirely on the empty state so the dashboard's
-  // primary content (projects grid) doesn't get pushed down for nothing.
-  if (!tasks || tasks.length === 0) {
-    return error ? (
-      <p
-        className="mb-4 rounded-md border border-kraken-alert/30 bg-kraken-alert/10 px-3 py-2 text-xs text-kraken-alert"
-        role="alert"
-      >
-        Live tasks: {error}
-      </p>
-    ) : null;
-  }
+  // Collapse the panel entirely when nothing is running (or on fetch error —
+  // this is a supplementary widget so we fail silently).
+  if (!tasks || tasks.length === 0) return null;
 
   return (
     <section
