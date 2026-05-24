@@ -34,6 +34,8 @@ export interface UsageWindow {
 }
 
 export interface ClaudeUsageReport {
+  /** Rolling 5-hour window — matches Claude Code's session rate-limit period. */
+  fiveHour: UsageWindow;
   /** Last 7 days, rolling. Matches Claude Pro/Max weekly reset semantics. */
   weekly: UsageWindow;
   /** Current calendar month. Matches the existing BudgetWidget's monthly cycle. */
@@ -63,6 +65,7 @@ export async function readClaudeUsage(
   rootDir: string = join(homedir(), ".claude", "projects"),
   now: Date = new Date(),
 ): Promise<ClaudeUsageReport> {
+  const fiveHourCutoff = new Date(now.getTime() - 5 * 60 * 60 * 1000);
   const weeklyCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   // Build the monthly cutoff in UTC so it lines up with the ISO timestamps
   // Claude Code writes. Without `Date.UTC`, a positive local-tz offset
@@ -72,10 +75,12 @@ export async function readClaudeUsage(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
   );
 
+  const fiveHour = empty();
   const weekly = empty();
   const monthly = empty();
   // Track sessions per window via Sets (a single session can span the
   // weekly cutoff — count it in both windows if it has turns in each).
+  const fiveHourSessions = new Set<string>();
   const weeklySessions = new Set<string>();
   const monthlySessions = new Set<string>();
 
@@ -88,7 +93,7 @@ export async function readClaudeUsage(
   } catch {
     // No ~/.claude/projects yet (fresh install, or user doesn't run Code
     // on this machine). Return zeros — UI surfaces "no data yet" cleanly.
-    return finalize(weekly, monthly, latestTurnAt, filesScanned);
+    return finalize(fiveHour, weekly, monthly, latestTurnAt, filesScanned);
   }
 
   for (const entry of projectDirs) {
@@ -115,10 +120,13 @@ export async function readClaudeUsage(
       const sessionId = f.replace(/\.jsonl$/, "");
 
       await aggregateFile(filePath, sessionId, {
+        fiveHourCutoff,
         weeklyCutoff,
         monthlyCutoff,
+        fiveHour,
         weekly,
         monthly,
+        fiveHourSessions,
         weeklySessions,
         monthlySessions,
         onLatest: (ts) => {
@@ -128,19 +136,22 @@ export async function readClaudeUsage(
     }
   }
 
+  fiveHour.sessions = fiveHourSessions.size;
   weekly.sessions = weeklySessions.size;
   monthly.sessions = monthlySessions.size;
 
-  return finalize(weekly, monthly, latestTurnAt, filesScanned);
+  return finalize(fiveHour, weekly, monthly, latestTurnAt, filesScanned);
 }
 
 function finalize(
+  fiveHour: UsageWindow,
   weekly: UsageWindow,
   monthly: UsageWindow,
   latestTurnAt: string | null,
   filesScanned: number,
 ): ClaudeUsageReport {
   return {
+    fiveHour,
     weekly,
     monthly,
     latestTurnAt,
@@ -150,10 +161,13 @@ function finalize(
 }
 
 interface AggregateContext {
+  fiveHourCutoff: Date;
   weeklyCutoff: Date;
   monthlyCutoff: Date;
+  fiveHour: UsageWindow;
   weekly: UsageWindow;
   monthly: UsageWindow;
+  fiveHourSessions: Set<string>;
   weeklySessions: Set<string>;
   monthlySessions: Set<string>;
   onLatest: (timestamp: string) => void;
@@ -211,6 +225,11 @@ async function aggregateFile(
         addInto(ctx.weekly, turn);
         ctx.weekly.assistantTurns += 1;
         ctx.weeklySessions.add(sessionId);
+      }
+      if (turnTime >= ctx.fiveHourCutoff) {
+        addInto(ctx.fiveHour, turn);
+        ctx.fiveHour.assistantTurns += 1;
+        ctx.fiveHourSessions.add(sessionId);
       }
     }
   } finally {

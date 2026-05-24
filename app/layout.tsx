@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Link from "next/link";
 import "./globals.css";
 import { BudgetWidget } from "@/components/BudgetWidget";
 
@@ -47,14 +48,13 @@ export default function RootLayout({
               <span aria-hidden="true" className="text-kraken-ice">⚓</span>
               DryDock
             </a>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-4">
+              <nav className="flex items-center gap-4">
+                <Link href="/backlog" className="text-sm text-kraken-shadow transition hover:text-kraken-ice">Backlog</Link>
+                <Link href="/settings" className="text-sm text-kraken-shadow transition hover:text-kraken-ice">Budget</Link>
+                <Link href="/analytics" className="text-sm text-kraken-shadow transition hover:text-kraken-ice">Analytics</Link>
+              </nav>
               <BudgetWidget />
-              <a
-                href="/analytics"
-                className="text-xs text-kraken-shadow transition hover:text-kraken-ice"
-              >
-                Analytics
-              </a>
             </div>
           </div>
         </header>

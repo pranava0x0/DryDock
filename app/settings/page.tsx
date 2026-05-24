@@ -34,6 +34,7 @@ interface UsageWindow {
 }
 
 interface ClaudeUsageReport {
+  fiveHour: UsageWindow;
   weekly: UsageWindow;
   monthly: UsageWindow;
   latestTurnAt: string | null;
@@ -141,10 +142,16 @@ function ClaudeBudgetCard({
         </a>
       </div>
       {report ? (
-        <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <UsageWindowBlock label="This week (rolling 7d)" window={report.weekly} />
-          <UsageWindowBlock label="This month" window={report.monthly} />
-        </dl>
+        <>
+          <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <UsageWindowBlock label="Last 5h (session window)" window={report.fiveHour} highlight />
+            <UsageWindowBlock label="This week (rolling 7d)" window={report.weekly} />
+            <UsageWindowBlock label="This month" window={report.monthly} />
+          </dl>
+          <p className="mt-1.5 text-[11px] text-kraken-shadow">
+            5h window matches Claude Code&apos;s session rate-limit period.
+          </p>
+        </>
       ) : null}
     </>
   );
@@ -153,12 +160,14 @@ function ClaudeBudgetCard({
 function UsageWindowBlock({
   label,
   window,
+  highlight,
 }: {
   label: string;
   window: UsageWindow;
+  highlight?: boolean;
 }) {
   return (
-    <div className="rounded-md border border-kraken-boundless/40 bg-kraken-deep/60 p-3">
+    <div className={`rounded-md border p-3 ${highlight ? "border-kraken-ice/40 bg-kraken-ice/5" : "border-kraken-boundless/40 bg-kraken-deep/60"}`}>
       <dt className="text-xs uppercase tracking-wide text-kraken-shadow">
         {label}
       </dt>
@@ -894,8 +903,6 @@ export default function SettingsPage() {
               </span>
             </label>
           </div>
-
-          <RoutingRulesSection />
 
           <div className="rounded-lg border border-kraken-boundless bg-kraken-deep/40 p-4">
             <h2 className="text-sm font-medium text-zinc-100">

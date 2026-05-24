@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import type { Project } from "@/lib/db/projects";
 import type { TaskCountsByStatus } from "@/lib/db/tasks";
 import { ProjectCard } from "@/components/ProjectCard";
@@ -52,29 +51,9 @@ export default function Dashboard() {
           <h1 className="text-xl font-semibold tracking-tight text-zinc-50">
             Projects
           </h1>
-          <div className="flex items-baseline gap-3 text-xs">
-            <Link
-              href="/backlog"
-              className="text-kraken-ice underline-offset-2 transition hover:underline"
-            >
-              Backlog
-            </Link>
-            <Link
-              href="/discover"
-              className="text-kraken-ice underline-offset-2 transition hover:underline"
-            >
-              Discover
-            </Link>
-            <Link
-              href="/settings"
-              className="text-kraken-ice underline-offset-2 transition hover:underline"
-            >
-              Settings
-            </Link>
-            <span className="text-kraken-shadow">
-              {loading ? "loading…" : `${projects.length} total`}
-            </span>
-          </div>
+          <span className="text-sm text-kraken-shadow">
+            {loading ? "loading…" : `${projects.length} total`}
+          </span>
         </div>
 
         {error ? (

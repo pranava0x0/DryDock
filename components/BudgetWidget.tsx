@@ -30,6 +30,13 @@ interface ClaudeWindow {
   outputTokens: number;
   cacheCreationInputTokens: number;
   cacheReadInputTokens: number;
+  assistantTurns: number;
+  sessions: number;
+}
+
+interface ClaudeReport {
+  fiveHour: ClaudeWindow;
+  monthly: ClaudeWindow;
 }
 
 interface CodexWindow {
@@ -46,7 +53,7 @@ interface GeminiWindow {
 type Report<T> = { monthly: T } | { error: string };
 
 interface ProviderBudgetsResponse {
-  claude: Report<ClaudeWindow>;
+  claude: ClaudeReport | { error: string };
   codex: Report<CodexWindow>;
   google: Report<GeminiWindow>;
 }
@@ -59,6 +66,16 @@ const compact = new Intl.NumberFormat(undefined, {
 function monthly<T>(report: Report<T> | undefined): T | null {
   if (!report || "error" in report) return null;
   return report.monthly;
+}
+
+function claudeMonthly(report: ClaudeReport | { error: string } | undefined): ClaudeWindow | null {
+  if (!report || "error" in report) return null;
+  return report.monthly;
+}
+
+function claudeFiveHour(report: ClaudeReport | { error: string } | undefined): ClaudeWindow | null {
+  if (!report || "error" in report) return null;
+  return report.fiveHour;
 }
 
 function claudeTokens(w: ClaudeWindow | null): number {
@@ -119,7 +136,8 @@ export function BudgetWidget() {
 
   if (!budgets) return null;
 
-  const claude = monthly(budgets.claude);
+  const claude = claudeMonthly(budgets.claude);
+  const claudeSession = claudeFiveHour(budgets.claude);
   const codex = monthly(budgets.codex);
   const google = monthly(budgets.google);
   const cTok = claudeTokens(claude);
@@ -221,8 +239,24 @@ export function BudgetWidget() {
               </div>
             </div>
 
-            {/* Per-service breakdown */}
-            <dl className="mt-4 space-y-1 text-sm">
+            {/* 5h session window */}
+            {claudeSession ? (
+              <div className="mt-3 rounded-md border border-kraken-ice/30 bg-kraken-ice/5 px-3 py-2">
+                <p className="text-xs font-medium text-kraken-ice">Last 5h session window</p>
+                <p className="mt-0.5 text-xs text-zinc-300">
+                  <span className="font-mono">{claudeSession.assistantTurns}</span>
+                  <span className="text-kraken-shadow"> turns · </span>
+                  <span className="font-mono">{compact.format(claudeTokens(claudeSession))}</span>
+                  <span className="text-kraken-shadow"> tokens</span>
+                  {claudeSession.sessions > 0 ? (
+                    <span className="text-kraken-shadow"> · {claudeSession.sessions} session{claudeSession.sessions === 1 ? "" : "s"}</span>
+                  ) : null}
+                </p>
+              </div>
+            ) : null}
+
+            {/* Per-service monthly breakdown */}
+            <dl className="mt-3 space-y-1 text-sm">
               <BreakdownRow
                 label="Claude"
                 value={claude ? `${compact.format(cTok)} tokens` : "—"}
@@ -248,9 +282,8 @@ export function BudgetWidget() {
               />
             </dl>
             <p className="mt-1 text-[11px] leading-snug text-kraken-shadow">
-              Tokens are Claude + Codex (all categories). Google reports
-              activity, not tokens. Full breakdown in Settings → Provider
-              budgets.
+              Monthly: Claude + Codex tokens (all categories). Google reports
+              activity, not tokens.
             </p>
 
             {/* Optional manual API credits */}
