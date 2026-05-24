@@ -41,6 +41,11 @@ export interface AgentRunOptions {
   timeoutMs?: number;
   /** Abort signal — when triggered, the provider must kill the subprocess. */
   signal?: AbortSignal;
+  /**
+   * Optional model override. Only honoured by the claude provider today
+   * (passed as `--model <model>`). Null / undefined = provider default.
+   */
+  model?: string | null;
 }
 
 /**

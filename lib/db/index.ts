@@ -88,6 +88,7 @@ function migrate(db: DB): void {
   ensure("runs", "cost_usd", "cost_usd REAL");
   ensure("runs", "gate_status", "gate_status TEXT");
   ensure("runs", "gate_output", "gate_output TEXT");
+  ensure("runs", "matched_rule", "matched_rule TEXT");
 
   // settings + backlog_items: covered by the CREATE TABLE IF NOT EXISTS
   // statements in schema.sql for fresh DBs. For databases that existed

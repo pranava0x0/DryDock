@@ -19,11 +19,10 @@ import { parseClaudeLine } from "./claude-parse";
 export const claudeProvider: AgentProvider = {
   name: "claude",
   run(prompt: string, options: AgentRunOptions): AsyncIterable<AgentEvent> {
-    const raw = spawnAgent(
-      "claude",
-      ["--print", "--output-format", "stream-json", "--verbose", prompt],
-      options,
-    );
+    const args = ["--print", "--output-format", "stream-json", "--verbose"];
+    if (options.model) args.push("--model", options.model);
+    args.push(prompt);
+    const raw = spawnAgent("claude", args, options);
     return transformClaudeStream(raw);
   },
 };

@@ -5,6 +5,11 @@ import Link from "next/link";
 import { PROVIDER_BUDGET_LINKS } from "@/lib/providers/budget-links";
 import { createThrottleGate } from "@/lib/util/throttle-gate";
 import { createIdleBackoff } from "@/lib/util/idle-backoff";
+import {
+  CLAUDE_MODELS,
+  type RoutingRule,
+} from "@/lib/routing/rules";
+import type { ProviderName } from "@/lib/providers/types";
 
 // Idle-backoff knobs for the Claude budget refresh. baseMs lines up with
 // the throttle gate's 1/min cap (so a backoff fire never gets blocked at
@@ -387,6 +392,314 @@ function CodexUsageWindowBlock({
   );
 }
 
+// ─── Routing rules section ────────────────────────────────────────────────
+
+const BLANK_FORM = {
+  label: "",
+  pattern: "",
+  patternType: "substring" as "substring" | "regex",
+  provider: "claude" as ProviderName,
+  model: null as string | null,
+  enabled: true,
+};
+
+function RoutingRulesSection() {
+  const [rules, setRules] = useState<RoutingRule[]>([]);
+  const [loadingRules, setLoadingRules] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [rulesError, setRulesError] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState(BLANK_FORM);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/routing-rules")
+      .then((r) => r.json())
+      .then((d: { rules: RoutingRule[] }) => setRules(d.rules ?? []))
+      .catch((e: Error) => setRulesError(e.message))
+      .finally(() => setLoadingRules(false));
+  }, []);
+
+  const saveRules = async (next: RoutingRule[]) => {
+    setSaving(true);
+    setRulesError(null);
+    try {
+      const res = await fetch("/api/routing-rules", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rules: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to save");
+      setRules(data.rules);
+      setDirty(false);
+    } catch (e) {
+      setRulesError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addRule = async () => {
+    if (!form.label.trim() || !form.pattern.trim()) return;
+    setSaving(true);
+    setRulesError(null);
+    try {
+      const res = await fetch("/api/routing-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...form,
+          model: form.provider === "claude" ? form.model : null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to add");
+      setRules(data.rules);
+      setForm(BLANK_FORM);
+      setShowAdd(false);
+    } catch (e) {
+      setRulesError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleEnabled = (id: string) => {
+    const next = rules.map((r) =>
+      r.id === id ? { ...r, enabled: !r.enabled } : r,
+    );
+    setRules(next);
+    setDirty(true);
+  };
+
+  const deleteRule = async (id: string) => {
+    setSaving(true);
+    setRulesError(null);
+    try {
+      const res = await fetch(
+        `/api/routing-rules?id=${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to delete");
+      setRules(data.rules);
+      setDirty(false);
+    } catch (e) {
+      setRulesError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const modelLabel = (model: string | null) => {
+    if (!model) return "default";
+    return CLAUDE_MODELS.find((m) => m.value === model)?.label ?? model;
+  };
+
+  return (
+    <div className="rounded-lg border border-kraken-boundless bg-kraken-deep/40 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-medium text-zinc-100">Routing rules</h2>
+          <p className="mt-0.5 text-xs text-kraken-shadow">
+            Rules are evaluated top-to-bottom at dispatch time; first match
+            overrides the task&apos;s provider and model.
+          </p>
+        </div>
+        <Link
+          href="/analytics"
+          className="shrink-0 text-xs text-kraken-ice underline-offset-2 transition hover:underline"
+        >
+          Analytics ↗
+        </Link>
+      </div>
+
+      {rulesError ? (
+        <p className="mt-2 text-xs text-kraken-alert" role="alert">
+          {rulesError}
+        </p>
+      ) : null}
+
+      {loadingRules ? (
+        <p className="mt-3 text-xs text-kraken-shadow">loading…</p>
+      ) : (
+        <>
+          {rules.length > 0 ? (
+            <ul className="mt-3 space-y-2">
+              {rules.map((rule) => (
+                <li
+                  key={rule.id}
+                  className="flex items-center gap-2 rounded-md border border-kraken-boundless/40 bg-kraken-surface px-3 py-2"
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleEnabled(rule.id)}
+                    disabled={saving}
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs transition ${
+                      rule.enabled
+                        ? "border-kraken-ice bg-kraken-ice/10 text-kraken-ice"
+                        : "border-kraken-boundless bg-transparent text-kraken-shadow"
+                    }`}
+                    title={rule.enabled ? "Disable rule" : "Enable rule"}
+                    aria-label={rule.enabled ? "Disable" : "Enable"}
+                  >
+                    {rule.enabled ? "✓" : ""}
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium text-zinc-200">
+                      {rule.label}
+                    </span>
+                    <span className="block truncate text-[10px] text-kraken-shadow">
+                      {rule.patternType === "regex" ? "regex" : "substr"}{" "}
+                      <code className="font-mono">{rule.pattern}</code>
+                      {" → "}
+                      {rule.provider}
+                      {rule.model ? ` · ${modelLabel(rule.model)}` : ""}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void deleteRule(rule.id)}
+                    disabled={saving}
+                    className="shrink-0 text-xs text-zinc-600 transition hover:text-kraken-alert disabled:opacity-40"
+                    aria-label={`Delete rule ${rule.label}`}
+                  >
+                    🗑️
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 text-xs text-kraken-shadow">
+              No rules yet — all tasks route to their stored provider.
+            </p>
+          )}
+
+          {dirty ? (
+            <button
+              type="button"
+              onClick={() => void saveRules(rules)}
+              disabled={saving}
+              className="mt-3 inline-flex min-h-[36px] items-center rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          ) : null}
+
+          {!showAdd ? (
+            <button
+              type="button"
+              onClick={() => setShowAdd(true)}
+              className="mt-3 inline-flex min-h-[36px] items-center rounded-md border border-kraken-boundless px-3 text-xs font-medium text-zinc-300 transition hover:bg-kraken-boundless/30"
+            >
+              + Add rule
+            </button>
+          ) : (
+            <div className="mt-3 space-y-2 rounded-md border border-kraken-boundless/60 bg-kraken-surface p-3">
+              <label className="block text-xs">
+                <span className="text-zinc-400">Label</span>
+                <input
+                  type="text"
+                  value={form.label}
+                  onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+                  placeholder="Lint fixes"
+                  className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
+                />
+              </label>
+              <label className="block text-xs">
+                <span className="text-zinc-400">Pattern</span>
+                <input
+                  type="text"
+                  value={form.pattern}
+                  onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
+                  placeholder="fix lint"
+                  className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 font-mono text-xs text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
+                />
+              </label>
+              <fieldset className="text-xs">
+                <legend className="text-zinc-400">Match type</legend>
+                <div className="mt-1 flex gap-3">
+                  {(["substring", "regex"] as const).map((pt) => (
+                    <label key={pt} className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="patternType"
+                        value={pt}
+                        checked={form.patternType === pt}
+                        onChange={() => setForm((f) => ({ ...f, patternType: pt }))}
+                        className="h-3 w-3 accent-kraken-ice"
+                      />
+                      <span className="text-zinc-300">{pt}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <div className="flex gap-2">
+                <label className="flex-1 text-xs">
+                  <span className="text-zinc-400">Provider</span>
+                  <select
+                    value={form.provider}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        provider: e.target.value as ProviderName,
+                        model: null,
+                      }))
+                    }
+                    className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                  >
+                    <option value="claude">Claude</option>
+                    <option value="gemini">Gemini</option>
+                  </select>
+                </label>
+                {form.provider === "claude" ? (
+                  <label className="flex-1 text-xs">
+                    <span className="text-zinc-400">Model</span>
+                    <select
+                      value={form.model ?? ""}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, model: e.target.value || null }))
+                      }
+                      className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                    >
+                      <option value="">default</option>
+                      {CLAUDE_MODELS.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setShowAdd(false); setForm(BLANK_FORM); }}
+                  className="flex-1 min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs font-medium text-zinc-300 transition hover:bg-kraken-boundless/30"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void addRule()}
+                  disabled={saving || !form.label.trim() || !form.pattern.trim()}
+                  className="flex-1 min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {saving ? "Adding…" : "Add"}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Main page ─────────────────────────────────────────────────────────────
+
 export default function SettingsPage() {
   const [autoCleanup, setAutoCleanup] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -581,6 +894,8 @@ export default function SettingsPage() {
               </span>
             </label>
           </div>
+
+          <RoutingRulesSection />
 
           <div className="rounded-lg border border-kraken-boundless bg-kraken-deep/40 p-4">
             <h2 className="text-sm font-medium text-zinc-100">

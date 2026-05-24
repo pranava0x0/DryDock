@@ -163,6 +163,14 @@ export function TaskCard({
               </dd>
             </div>
           ) : null}
+          {latestRun?.matched_rule ? (
+            <div className="flex items-center gap-1">
+              <dt className="sr-only">Routing rule</dt>
+              <dd className="rounded bg-kraken-boundless/40 px-1.5 py-0.5 font-mono text-[10px] text-kraken-shadow">
+                rule: {latestRun.matched_rule}
+              </dd>
+            </div>
+          ) : null}
         </dl>
       ) : null}
 

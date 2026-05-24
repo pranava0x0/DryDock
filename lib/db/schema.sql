@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS runs (
   -- when project.test_command is set and the gate ran after agent exit 0.
   gate_status   TEXT,
   gate_output   TEXT,
+  -- Routing rule label that overrode the task's default provider/model at
+  -- dispatch time. NULL when no rule matched (default routing was used).
+  matched_rule  TEXT,
   started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
   completed_at  INTEGER
 );

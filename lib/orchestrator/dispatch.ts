@@ -1,7 +1,8 @@
 import { getTask, updateTask, claimTask } from "../db/tasks";
 import { getProject } from "../db/projects";
 import { createRun, completeRun } from "../db/runs";
-import { getBooleanSetting } from "../db/settings";
+import { getBooleanSetting, getSetting } from "../db/settings";
+import { matchRoute, parseRules, ROUTING_RULES_KEY } from "../routing/rules";
 import { getProvider } from "../providers";
 import type { AgentEvent, AgentProvider } from "../providers/types";
 import { buildAgentPrompt } from "./prompt";
@@ -134,17 +135,25 @@ export function dispatchTask(
     );
   }
 
+  // Build the prompt first so routing rules can match against it.
+  const prompt = buildAgentPrompt(task);
+
+  // Apply routing rules. First match wins; no match → use task's stored provider.
+  const routingMatch = matchRoute(prompt, parseRules(getSetting(ROUTING_RULES_KEY)));
+  const effectiveProvider = routingMatch?.provider ?? task.provider;
+  const effectiveModel = routingMatch?.model ?? null;
+  const matchedRuleLabel = routingMatch?.ruleLabel ?? null;
+
   // Create the run row up front so we have an id to return immediately.
   // Without this, the caller would have to wait for the first agent event
   // before knowing which run to subscribe to.
-  const run = createRun(taskId, task.provider);
+  const run = createRun(taskId, effectiveProvider, matchedRuleLabel);
   updateTask(taskId, { status: "running" });
 
   const providerFactory = options.providerFactory ?? getProvider;
-  const provider = providerFactory(task.provider);
+  const provider = providerFactory(effectiveProvider);
   const controller = new AbortController();
   ACTIVE_RUNS.set(run.id, controller);
-  const prompt = buildAgentPrompt(task);
   const timeoutMs = options.timeoutMs ?? agentTimeoutMs();
   const isGitRepoFn = options.isGitRepo ?? defaultIsGitRepo;
   const createWorktreeFn = options.createWorktree ?? defaultCreateWorktree;
@@ -221,10 +230,17 @@ export function dispatchTask(
     }
 
     try {
+      if (matchedRuleLabel) {
+        const modelNote = effectiveModel ? ` (${effectiveModel})` : "";
+        const note = `[drydock] routing rule "${matchedRuleLabel}" → ${effectiveProvider}${modelNote}`;
+        publish(run.id, { type: "stdout", data: note });
+        stdoutLines.push(note);
+      }
       for await (const event of provider.run(prompt, {
         cwd,
         signal: controller.signal,
         timeoutMs,
+        model: effectiveModel,
       })) {
         if (event.type === "stdout") stdoutLines.push(event.data);
         if (event.type === "stderr") stderrLines.push(event.data);

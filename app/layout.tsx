@@ -49,7 +49,12 @@ export default function RootLayout({
             </a>
             <div className="flex items-center gap-3">
               <BudgetWidget />
-              <span className="text-xs text-kraken-shadow">orchestrator</span>
+              <a
+                href="/analytics"
+                className="text-xs text-kraken-shadow transition hover:text-kraken-ice"
+              >
+                Analytics
+              </a>
             </div>
           </div>
         </header>

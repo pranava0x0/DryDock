@@ -20,17 +20,23 @@ export interface Run {
   /** Quality-gate result (null when the gate wasn't run for this run). */
   gate_status: GateStatus | null;
   gate_output: string | null;
+  /** Label of the routing rule that overrode provider/model at dispatch time. */
+  matched_rule: string | null;
   started_at: number;
   completed_at: number | null;
 }
 
-export function createRun(taskId: string, provider: ProviderName): Run {
+export function createRun(
+  taskId: string,
+  provider: ProviderName,
+  matchedRule?: string | null,
+): Run {
   const db = getDb();
   const id = nanoid();
   db.prepare(
-    `INSERT INTO runs (id, task_id, provider, status)
-     VALUES (?, ?, ?, 'running')`,
-  ).run(id, taskId, provider);
+    `INSERT INTO runs (id, task_id, provider, status, matched_rule)
+     VALUES (?, ?, ?, 'running', ?)`,
+  ).run(id, taskId, provider, matchedRule ?? null);
   const created = getRun(id);
   if (!created) {
     throw new Error(`createRun: row not found after insert (id=${id})`);
@@ -44,7 +50,7 @@ export function getRun(id: string): Run | null {
     .prepare(
       `SELECT id, task_id, provider, status, output, error,
               tokens_in, tokens_out, cost_usd,
-              gate_status, gate_output,
+              gate_status, gate_output, matched_rule,
               started_at, completed_at
        FROM runs WHERE id = ?`,
     )
@@ -58,7 +64,7 @@ export function listRunsForTask(taskId: string): Run[] {
     .prepare(
       `SELECT id, task_id, provider, status, output, error,
               tokens_in, tokens_out, cost_usd,
-              gate_status, gate_output,
+              gate_status, gate_output, matched_rule,
               started_at, completed_at
        FROM runs
        WHERE task_id = ?
@@ -73,7 +79,7 @@ export function getLatestRunForTask(taskId: string): Run | null {
     .prepare(
       `SELECT id, task_id, provider, status, output, error,
               tokens_in, tokens_out, cost_usd,
-              gate_status, gate_output,
+              gate_status, gate_output, matched_rule,
               started_at, completed_at
        FROM runs
        WHERE task_id = ?
