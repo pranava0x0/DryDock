@@ -16,7 +16,7 @@ Three structural gaps dominate everything else:
 
 The plan: **secure the door, make tasks threads, close the git loop** — then layer on the triage UX, notifications, verification evidence, and provider refresh that turn DryDock into a genuine mission control. DryDock's phone-first PWA remains a real differentiator (Antigravity still has no first-party mobile; Conductor/Claude Squad/Sculptor are desktop-bound) — but only once review-and-merge works from the couch.
 
-One process finding, separate from the app itself: **DryDock is the only active repo not following its owner's own ritual.** The GitHub remote is ~47 days stale, recent work landed without PRs, and it has never received a Codex bot review — while every other active repo (FirstPassRx, bubblebook, shirtpost, …) runs PR + `@codex review` + multi-lens self-review with per-finding disposition. Fix the process alongside the product.
+One process finding, separate from the app itself: **DryDock is the only active repo not following its owner's own ritual.** The entire May 24 feature wave landed as direct-to-main commits without PRs (only PRs #1–#4 ever existed, none received review), and the repo has never had a Codex bot review — while every other active repo (FirstPassRx, bubblebook, shirtpost, …) runs PR + `@codex review` + multi-lens self-review with per-finding disposition. Fix the process alongside the product.
 
 ---
 
@@ -28,7 +28,7 @@ One process finding, separate from the app itself: **DryDock is the only active 
 - Cost capture from `stream-json`, monthly budget rollup, 5h-session budget pill, provider usage cards reading local session logs for Claude / Codex / Antigravity — ahead of most peers.
 - Apple Notes backlog sync — battle-hardened (DD-004…DD-008), unique, leave it alone.
 - Policy model routing engine + analytics page (DD-BL-32/33) — shipped, though the routing UI is currently hidden (DD-BL-35).
-- 23 test files / ~236 cases over `lib/` with a regression-test-per-bug culture.
+- 23 test files / 252 cases over `lib/` with a regression-test-per-bug culture.
 
 **Gap map (from the capability inventory):**
 
@@ -328,7 +328,7 @@ Conventions for all epics, sourced from this repo's own agreements and the owner
 
 Not a feature epic — the debt items the GitHub mining pass says the owner would flag in review:
 
-1. **Put DryDock back on its own ritual.** Push the stale remote; every epic above lands as a PR with `@codex review` + the multi-lens self-review + per-finding disposition ("Fixed in <sha>" replies). The repo that orchestrates agents should be the best-reviewed repo, not the only unreviewed one.
+1. **Put DryDock back on its own ritual.** Every epic above lands as a PR with `@codex review` + the multi-lens self-review + per-finding disposition ("Fixed in <sha>" replies) — no more direct-to-main feature waves. The repo that orchestrates agents should be the best-reviewed repo, not the only unreviewed one.
 2. **App-layer tests.** Route handlers are the product's public API and have zero tests. Add vitest coverage for the high-risk ones as they're touched in EP-1…8 (run, cancel, followup, diff, pr, merge, webhooks) using the stub provider + temp SQLite (pattern already exists in dispatch tests). Also: `lib/db/analytics.ts` percentile math, `claude.ts`/`gemini.ts` argv construction (EP-1b/6a deliver these).
 3. **Silent-failure audit.** One pass over `catch` blocks in `app/` + `lib/` — every swallow either surfaces to UI state or logs with context. (The RunningTasksPanel silent-error fix suggests there are siblings.)
 4. **Supply chain.** New deps in this plan: `web-push` (EP-5), possibly a JWKS lib (EP-1, or hand-roll with `jose`). For each: check `vibe-coding-security/advisories`, exact-pin (no `^`), `npm ci --ignore-scripts` in any future CI, verify package names against the registry (slopsquatting check).
