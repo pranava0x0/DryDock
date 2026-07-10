@@ -2,6 +2,8 @@
 
 Product backlog for the DryDock orchestrator app. The portfolio-level [BACKLOG.md](BACKLOG.md) covers cross-project work; this file is just DryDock features.
 
+> **2026-07-10:** [docs/improvement-plan-2026-07.md](docs/improvement-plan-2026-07.md) reconciles every DD-BL item below into 9 sequenced epics (absorbed / deferred / reduced, with rationale) based on the mid-2026 Codex/Antigravity landscape. Read it before picking the next item.
+
 ## Active Backlog
 
 | ID | Feature | Priority | Complexity | Size | Impact | Status |
