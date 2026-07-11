@@ -22,11 +22,19 @@ function stubProvider(name: ProviderName): AgentProvider {
     name,
     async *run(
       prompt: string,
-      options?: { signal?: AbortSignal },
+      options?: { signal?: AbortSignal; resumeSessionId?: string | null },
     ): AsyncIterable<AgentEvent> {
+      // Emit a stable session id so the follow-up (--resume) path is
+      // exercisable under the stub. A resume keeps the same id.
+      yield {
+        type: "session",
+        sessionId: options?.resumeSessionId ?? "stub-session-1",
+      };
       yield {
         type: "stdout",
-        data: `[drydock-stub] would have dispatched ${name}: ${prompt.slice(0, 80)}`,
+        data: options?.resumeSessionId
+          ? `[drydock-stub] resumed ${name} (${options.resumeSessionId}): ${prompt.slice(0, 80)}`
+          : `[drydock-stub] would have dispatched ${name}: ${prompt.slice(0, 80)}`,
       };
       const delayMs = Number.parseInt(
         process.env.DRYDOCK_PROVIDER_STUB_DELAY_MS ?? "0",
