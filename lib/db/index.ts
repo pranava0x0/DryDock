@@ -83,12 +83,14 @@ function migrate(db: DB): void {
   };
 
   ensure("projects", "test_command", "test_command TEXT");
+  ensure("projects", "autonomy", "autonomy TEXT NOT NULL DEFAULT 'edits'");
   ensure("runs", "tokens_in", "tokens_in INTEGER");
   ensure("runs", "tokens_out", "tokens_out INTEGER");
   ensure("runs", "cost_usd", "cost_usd REAL");
   ensure("runs", "gate_status", "gate_status TEXT");
   ensure("runs", "gate_output", "gate_output TEXT");
   ensure("runs", "matched_rule", "matched_rule TEXT");
+  ensure("runs", "failure_reason", "failure_reason TEXT");
 
   // settings + backlog_items: covered by the CREATE TABLE IF NOT EXISTS
   // statements in schema.sql for fresh DBs. For databases that existed

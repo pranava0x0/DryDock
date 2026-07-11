@@ -213,6 +213,7 @@ describe("tasks CRUD", () => {
     const counts = taskCountsByProject(p.id);
     expect(counts).toEqual({
       pending: 1,
+      queued: 0,
       claimed: 0,
       running: 0,
       done: 1,

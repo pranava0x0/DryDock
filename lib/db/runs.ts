@@ -4,6 +4,12 @@ import type { ProviderName } from "../providers/types";
 
 export type RunStatus = "running" | "success" | "failed";
 export type GateStatus = "passed" | "failed";
+/**
+ * Why a failed run failed. `cancelled` = user hit Stop; `gate_failed` =
+ * agent exited 0 but the quality gate demoted it; `agent_exit` = the agent
+ * subprocess itself exited non-zero (includes timeouts and spawn errors).
+ */
+export type FailureReason = "cancelled" | "gate_failed" | "agent_exit";
 
 export interface Run {
   id: string;
@@ -22,6 +28,8 @@ export interface Run {
   gate_output: string | null;
   /** Label of the routing rule that overrode provider/model at dispatch time. */
   matched_rule: string | null;
+  /** Why the run failed; null on success and on pre-column legacy rows. */
+  failure_reason: FailureReason | null;
   started_at: number;
   completed_at: number | null;
 }
@@ -50,7 +58,7 @@ export function getRun(id: string): Run | null {
     .prepare(
       `SELECT id, task_id, provider, status, output, error,
               tokens_in, tokens_out, cost_usd,
-              gate_status, gate_output, matched_rule,
+              gate_status, gate_output, matched_rule, failure_reason,
               started_at, completed_at
        FROM runs WHERE id = ?`,
     )
@@ -64,7 +72,7 @@ export function listRunsForTask(taskId: string): Run[] {
     .prepare(
       `SELECT id, task_id, provider, status, output, error,
               tokens_in, tokens_out, cost_usd,
-              gate_status, gate_output, matched_rule,
+              gate_status, gate_output, matched_rule, failure_reason,
               started_at, completed_at
        FROM runs
        WHERE task_id = ?
@@ -79,7 +87,7 @@ export function getLatestRunForTask(taskId: string): Run | null {
     .prepare(
       `SELECT id, task_id, provider, status, output, error,
               tokens_in, tokens_out, cost_usd,
-              gate_status, gate_output, matched_rule,
+              gate_status, gate_output, matched_rule, failure_reason,
               started_at, completed_at
        FROM runs
        WHERE task_id = ?
@@ -99,6 +107,7 @@ export interface CompleteRunInput {
   cost_usd?: number | null;
   gate_status?: GateStatus | null;
   gate_output?: string | null;
+  failure_reason?: FailureReason | null;
 }
 
 /**
@@ -120,6 +129,7 @@ export function completeRun(id: string, input: CompleteRunInput): Run | null {
          cost_usd = ?,
          gate_status = ?,
          gate_output = ?,
+         failure_reason = ?,
          completed_at = unixepoch()
      WHERE id = ?`,
   ).run(
@@ -131,6 +141,7 @@ export function completeRun(id: string, input: CompleteRunInput): Run | null {
     input.cost_usd ?? null,
     input.gate_status ?? null,
     input.gate_output ?? null,
+    input.failure_reason ?? null,
     id,
   );
   return getRun(id);
