@@ -181,10 +181,12 @@ describe("dispatchTask", () => {
     const received: AgentEvent[] = [];
     for await (const e of subscribe(runId)) received.push(e);
     expect(received).toHaveLength(4);
+    const text = (e: AgentEvent): string =>
+      "data" in e ? e.data : "";
     expect(received[0]).toMatchObject({ type: "stdout" });
-    expect(received[0].data).toMatch(/not a git repo/);
+    expect(text(received[0])).toMatch(/not a git repo/);
     expect(received[1]).toMatchObject({ type: "stdout" });
-    expect(received[1].data).toMatch(/autonomy profile: edits/);
+    expect(text(received[1])).toMatch(/autonomy profile: edits/);
     expect(received[2]).toEqual({ type: "stdout", data: "first" });
     expect(received[3]).toEqual({ type: "exit", data: "success", code: 0 });
 
