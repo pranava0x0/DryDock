@@ -51,9 +51,12 @@ export function autonomyArgs(level: AutonomyLevel = "edits"): string[] {
 /** Pure argv builder — exported so tests can pin the exact CLI contract. */
 export function buildClaudeArgs(
   prompt: string,
-  options: Pick<AgentRunOptions, "model" | "autonomy">,
+  options: Pick<AgentRunOptions, "model" | "autonomy" | "resumeSessionId">,
 ): string[] {
   const args = ["--print", "--output-format", "stream-json", "--verbose"];
+  // --resume continues an existing session; it goes before the prompt and
+  // is compatible with the permission/model flags.
+  if (options.resumeSessionId) args.push("--resume", options.resumeSessionId);
   args.push(...autonomyArgs(options.autonomy));
   if (options.model) args.push("--model", options.model);
   args.push(prompt);
@@ -101,6 +104,9 @@ async function* transformClaudeStream(
     switch (parsed.kind) {
       case "text":
         yield { type: "stdout", data: parsed.data };
+        break;
+      case "session":
+        yield { type: "session", sessionId: parsed.sessionId };
         break;
       case "usage":
         lastUsage = {

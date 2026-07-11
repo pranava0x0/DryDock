@@ -81,4 +81,26 @@ describe("buildClaudeArgs", () => {
       "--verbose",
     ]);
   });
+
+  it("adds --resume <id> before the prompt for a follow-up turn", () => {
+    const args = buildClaudeArgs("now fix the tests", {
+      autonomy: "edits",
+      resumeSessionId: "sess-42",
+    });
+    const idx = args.indexOf("--resume");
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe("sess-42");
+    expect(args[args.length - 1]).toBe("now fix the tests");
+    // Resume composes with the permission flags, not instead of them.
+    expect(args).toContain("--permission-mode");
+  });
+
+  it("omits --resume when no session id is set", () => {
+    expect(buildClaudeArgs("p", { autonomy: "edits" })).not.toContain(
+      "--resume",
+    );
+    expect(
+      buildClaudeArgs("p", { autonomy: "edits", resumeSessionId: null }),
+    ).not.toContain("--resume");
+  });
 });

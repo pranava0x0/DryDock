@@ -141,6 +141,66 @@ export async function createWorktree(
 }
 
 /**
+ * True if `path` is an existing worktree still registered with the project
+ * repo (not just a leftover directory). A follow-up turn reuses it directly
+ * when present; otherwise it recreates from the branch.
+ */
+export async function worktreeExists(
+  projectPath: string,
+  path: string,
+): Promise<boolean> {
+  try {
+    const { stdout } = await execFileP("git", [
+      "-C",
+      projectPath,
+      "worktree",
+      "list",
+      "--porcelain",
+    ]);
+    // Each worktree is a `worktree <abs-path>` line. Match on the exact path.
+    return stdout
+      .split("\n")
+      .some((line) => line === `worktree ${path}`);
+  } catch {
+    return false;
+  }
+}
+
+export interface RecreateWorktreeInput {
+  projectPath: string;
+  projectId: string;
+  taskId: string;
+  branch: string;
+}
+
+/**
+ * Re-attach a worktree for an existing branch — used by a follow-up turn
+ * when the original worktree was auto-cleaned after the first run (the
+ * branch always survives cleanup). Equivalent to
+ * `git worktree add <path> <branch>` (no -b: the branch already exists).
+ *
+ * Throws if the branch is gone (nothing to resume against) so the caller
+ * can surface an honest "can't resume" error instead of silently forking a
+ * new branch.
+ */
+export async function recreateWorktree(
+  input: RecreateWorktreeInput,
+): Promise<CreateWorktreeResult> {
+  const path = worktreePath(input.projectId, input.taskId);
+  await mkdir(join(worktreeRoot(), input.projectId), { recursive: true });
+  await rm(path, { recursive: true, force: true });
+  await execFileP("git", [
+    "-C",
+    input.projectPath,
+    "worktree",
+    "add",
+    path,
+    input.branch,
+  ]);
+  return { worktreePath: path, branch: input.branch };
+}
+
+/**
  * Tear down a worktree and (optionally) its branch.
  *
  * Phase 2 deliberately does NOT call this on success — we keep the worktree
