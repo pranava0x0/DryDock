@@ -11,6 +11,29 @@ export function isProviderName(value: unknown): value is ProviderName {
 }
 
 /**
+ * How much blast radius an agent gets, set per project. Maps to explicit
+ * CLI permission flags — the host's own `~/.claude/settings.json` should
+ * never be the thing deciding what a dispatched agent may do.
+ *
+ * - `readonly`: plan/analysis only, no writes.
+ * - `edits`: file edits plus a narrow Bash allowlist (tests, typecheck,
+ *   read-only git). The default.
+ * - `full`: file edits plus unrestricted Bash. Still never a permission
+ *   bypass — `--dangerously-skip-permissions` is banned on the host.
+ */
+export type AutonomyLevel = "readonly" | "edits" | "full";
+
+export const AUTONOMY_LEVELS: readonly AutonomyLevel[] = [
+  "readonly",
+  "edits",
+  "full",
+] as const;
+
+export function isAutonomyLevel(value: unknown): value is AutonomyLevel {
+  return value === "readonly" || value === "edits" || value === "full";
+}
+
+/**
  * An event emitted by a running agent. Providers stream these as the
  * subprocess produces output; the orchestrator forwards them to the SSE
  * client and aggregates them into the final `runs.output` row.
@@ -46,6 +69,12 @@ export interface AgentRunOptions {
    * (passed as `--model <model>`). Null / undefined = provider default.
    */
   model?: string | null;
+  /**
+   * Permission profile for the subprocess. Only honoured by the claude
+   * provider today (mapped to `--permission-mode` / `--allowedTools`).
+   * Undefined = 'edits'.
+   */
+  autonomy?: AutonomyLevel;
 }
 
 /**

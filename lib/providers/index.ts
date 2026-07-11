@@ -12,15 +12,44 @@ const REGISTRY: Record<ProviderName, AgentProvider> = {
  * without spending API tokens. Activated by setting
  * `DRYDOCK_PROVIDER_STUB=1` in the environment before `npm run dev`.
  * Emits a fixed transcript + usage event and exits cleanly.
+ *
+ * `DRYDOCK_PROVIDER_STUB_DELAY_MS` (optional) holds the run open that long
+ * so queue/cancel UI states are actually observable during UAT. The wait
+ * is abort-aware: cancelling mid-delay exits like a SIGTERM'd agent.
  */
 function stubProvider(name: ProviderName): AgentProvider {
   return {
     name,
-    async *run(prompt: string): AsyncIterable<AgentEvent> {
+    async *run(
+      prompt: string,
+      options?: { signal?: AbortSignal },
+    ): AsyncIterable<AgentEvent> {
       yield {
         type: "stdout",
         data: `[drydock-stub] would have dispatched ${name}: ${prompt.slice(0, 80)}`,
       };
+      const delayMs = Number.parseInt(
+        process.env.DRYDOCK_PROVIDER_STUB_DELAY_MS ?? "0",
+        10,
+      );
+      if (Number.isFinite(delayMs) && delayMs > 0) {
+        const aborted = await new Promise<boolean>((resolve) => {
+          if (options?.signal?.aborted) return resolve(true);
+          const timer = setTimeout(() => resolve(false), delayMs);
+          options?.signal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              resolve(true);
+            },
+            { once: true },
+          );
+        });
+        if (aborted) {
+          yield { type: "exit", data: "SIGTERM", code: -1 };
+          return;
+        }
+      }
       yield {
         type: "usage",
         data: "[drydock-stub] usage — in 0, out 0, $0.0000",

@@ -2,9 +2,63 @@ import type {
   AgentEvent,
   AgentProvider,
   AgentRunOptions,
+  AutonomyLevel,
 } from "./types";
 import { spawnAgent } from "./spawn";
 import { parseClaudeLine } from "./claude-parse";
+
+/**
+ * Bash commands the `edits` profile may run without asking. Everything
+ * else Bash-shaped is denied in headless mode (there's no human to answer
+ * a prompt). Edits/reads don't appear here — `acceptEdits` covers file
+ * edits and read-only tools never need permission.
+ */
+export const EDITS_BASH_ALLOWLIST: readonly string[] = [
+  "Bash(npm test:*)",
+  "Bash(npm run test:*)",
+  "Bash(npm run typecheck:*)",
+  "Bash(npm run build:*)",
+  "Bash(git status:*)",
+  "Bash(git diff:*)",
+  "Bash(git log:*)",
+] as const;
+
+/**
+ * Map a project's autonomy profile to explicit permission flags. The whole
+ * point is that the dispatched agent's blast radius is decided *here*, in
+ * versioned code — not by whatever the host's ~/.claude/settings.json
+ * happens to allow. `--dangerously-skip-permissions` is never an output.
+ *
+ * `--allowedTools` takes one comma-joined argv element on purpose: the
+ * space-separated variadic form would swallow the trailing prompt argument.
+ */
+export function autonomyArgs(level: AutonomyLevel = "edits"): string[] {
+  switch (level) {
+    case "readonly":
+      return ["--permission-mode", "plan"];
+    case "full":
+      return ["--permission-mode", "acceptEdits", "--allowedTools", "Bash"];
+    case "edits":
+      return [
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        EDITS_BASH_ALLOWLIST.join(","),
+      ];
+  }
+}
+
+/** Pure argv builder — exported so tests can pin the exact CLI contract. */
+export function buildClaudeArgs(
+  prompt: string,
+  options: Pick<AgentRunOptions, "model" | "autonomy">,
+): string[] {
+  const args = ["--print", "--output-format", "stream-json", "--verbose"];
+  args.push(...autonomyArgs(options.autonomy));
+  if (options.model) args.push("--model", options.model);
+  args.push(prompt);
+  return args;
+}
 
 /**
  * Claude Code CLI provider.
@@ -19,10 +73,7 @@ import { parseClaudeLine } from "./claude-parse";
 export const claudeProvider: AgentProvider = {
   name: "claude",
   run(prompt: string, options: AgentRunOptions): AsyncIterable<AgentEvent> {
-    const args = ["--print", "--output-format", "stream-json", "--verbose"];
-    if (options.model) args.push("--model", options.model);
-    args.push(prompt);
-    const raw = spawnAgent("claude", args, options);
+    const raw = spawnAgent("claude", buildClaudeArgs(prompt, options), options);
     return transformClaudeStream(raw);
   },
 };
