@@ -4,7 +4,11 @@ import {
   getNumberSetting,
   setSetting,
 } from "@/lib/db/settings";
-import { AUTO_CLEANUP_WORKTREE_KEY } from "@/lib/orchestrator/dispatch";
+import {
+  AUTO_CLEANUP_WORKTREE_KEY,
+  MAX_CONCURRENT_RUNS_KEY,
+  maxConcurrentRuns,
+} from "@/lib/orchestrator/dispatch";
 import { CREDITS_KEY } from "@/lib/budget/window";
 import { badRequest, ok, serverError } from "@/lib/api/json";
 
@@ -32,6 +36,12 @@ const WRITABLE: Record<string, WritableSetting> = {
   [CREDITS_KEY]: {
     shape: "number",
     read: () => getNumberSetting(CREDITS_KEY),
+  },
+  // Dispatch concurrency cap. Read back as the effective value (clamped,
+  // defaulted) so the UI always shows what the dispatcher will actually do.
+  [MAX_CONCURRENT_RUNS_KEY]: {
+    shape: "number",
+    read: () => maxConcurrentRuns(),
   },
 };
 

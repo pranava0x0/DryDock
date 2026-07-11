@@ -21,6 +21,7 @@ const IDLE_BACKOFF_MAX_MS = 30 * 60_000;
 interface SettingsResponse {
   settings: {
     auto_cleanup_worktree?: boolean;
+    max_concurrent_runs?: number;
   };
 }
 
@@ -711,6 +712,7 @@ function RoutingRulesSection() {
 
 export default function SettingsPage() {
   const [autoCleanup, setAutoCleanup] = useState(true);
+  const [maxConcurrent, setMaxConcurrent] = useState(3);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -728,6 +730,9 @@ export default function SettingsPage() {
       const data: SettingsResponse = await res.json();
       if (!res.ok) throw new Error((data as { error?: string }).error ?? "Failed to load");
       setAutoCleanup(Boolean(data.settings.auto_cleanup_worktree));
+      if (typeof data.settings.max_concurrent_runs === "number") {
+        setMaxConcurrent(data.settings.max_concurrent_runs);
+      }
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -821,6 +826,31 @@ export default function SettingsPage() {
     };
   }, [maybeRefreshBudgets]);
 
+  const handleMaxConcurrent = async (next: number) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_concurrent_runs: next }),
+      });
+      const data: SettingsResponse = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          (data as { error?: string }).error ?? "Failed to save",
+        );
+      }
+      if (typeof data.settings.max_concurrent_runs === "number") {
+        setMaxConcurrent(data.settings.max_concurrent_runs);
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleToggle = async (next: boolean) => {
     setSaving(true);
     setStatus(null);
@@ -901,6 +931,36 @@ export default function SettingsPage() {
                   <span className="mt-2 block text-xs text-kraken-ice">{status}</span>
                 ) : null}
               </span>
+            </label>
+          </div>
+
+          <div className="rounded-lg border border-kraken-boundless bg-kraken-deep/40 p-4">
+            <label className="block">
+              <span className="block text-sm font-medium text-zinc-100">
+                Max concurrent agent runs
+              </span>
+              <span className="mt-1 block text-xs text-kraken-shadow">
+                Tasks beyond this cap queue up and start automatically as
+                running tasks finish. Each run is one CLI subprocess in its
+                own worktree.
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={maxConcurrent}
+                disabled={saving}
+                onChange={(e) => {
+                  const next = Number.parseInt(e.target.value, 10);
+                  if (Number.isFinite(next)) setMaxConcurrent(next);
+                }}
+                onBlur={() => {
+                  const clamped = Math.min(10, Math.max(1, maxConcurrent));
+                  setMaxConcurrent(clamped);
+                  void handleMaxConcurrent(clamped);
+                }}
+                className="mt-2 h-11 w-24 rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-sm text-zinc-50 focus:border-kraken-ice focus:outline-none"
+              />
             </label>
           </div>
 

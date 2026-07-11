@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { createProject, listProjects } from "@/lib/db/projects";
 import { taskCountsByProject } from "@/lib/db/tasks";
 import { isProviderName } from "@/lib/providers";
+import { isAutonomyLevel, type AutonomyLevel } from "@/lib/providers/types";
 import { badRequest, created, ok, serverError } from "@/lib/api/json";
 
 // Force the Node runtime: the DB layer uses better-sqlite3 (native bindings)
@@ -63,6 +64,14 @@ export async function POST(request: NextRequest): Promise<Response> {
     test_command = trimmed.length > 0 ? trimmed : null;
   }
 
+  let autonomy: AutonomyLevel = "edits";
+  if (raw.autonomy !== undefined) {
+    if (!isAutonomyLevel(raw.autonomy)) {
+      return badRequest("`autonomy` must be 'readonly', 'edits', or 'full'");
+    }
+    autonomy = raw.autonomy;
+  }
+
   try {
     const project = createProject({
       name,
@@ -70,6 +79,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       description,
       provider,
       test_command,
+      autonomy,
     });
     return created({ project });
   } catch (err) {

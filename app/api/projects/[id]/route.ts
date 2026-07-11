@@ -5,6 +5,7 @@ import {
   updateProject,
 } from "@/lib/db/projects";
 import { isProviderName } from "@/lib/providers";
+import { isAutonomyLevel, type AutonomyLevel } from "@/lib/providers/types";
 import {
   badRequest,
   notFound,
@@ -52,6 +53,7 @@ export async function PATCH(
     description?: string | null;
     provider?: "claude" | "gemini";
     test_command?: string | null;
+    autonomy?: AutonomyLevel;
   } = {};
 
   if (raw.name !== undefined) {
@@ -87,6 +89,12 @@ export async function PATCH(
     } else {
       return badRequest("`test_command` must be a string or null");
     }
+  }
+  if (raw.autonomy !== undefined) {
+    if (!isAutonomyLevel(raw.autonomy)) {
+      return badRequest("`autonomy` must be 'readonly', 'edits', or 'full'");
+    }
+    patch.autonomy = raw.autonomy;
   }
 
   try {
