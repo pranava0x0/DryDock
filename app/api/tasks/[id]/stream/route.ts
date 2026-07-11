@@ -42,13 +42,14 @@ export async function GET(
     return notFound(`No runs yet for task: ${id}`);
   }
 
-  // When the client closes the tab / phone, propagate the cancellation down
-  // to the subscriber and (if the run is still active) the subprocess.
+  // When the client closes the tab / phone, stop the SSE subscription —
+  // and ONLY the subscription. A dropped stream must never kill a healthy
+  // run: phone clients lose connections constantly (lock screen, app
+  // switch, tunnel blips). Stopping the agent is an explicit user action
+  // via POST /api/tasks/[id]/cancel.
   const abort = new AbortController();
   request.signal.addEventListener("abort", () => {
     abort.abort();
-    const controller = getActiveRunController(latestRun.id);
-    if (controller) controller.abort();
   });
 
   const encoder = new TextEncoder();

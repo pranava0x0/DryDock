@@ -1,9 +1,9 @@
 import type { NextRequest } from "next/server";
 import {
-  dispatchTask,
+  runTaskWithCap,
   DispatchError,
 } from "@/lib/orchestrator/dispatch";
-import { conflict, notFound, ok, serverError } from "@/lib/api/json";
+import { accepted, conflict, notFound, ok, serverError } from "@/lib/api/json";
 
 export const runtime = "nodejs";
 
@@ -14,6 +14,10 @@ interface RouteContext {
 /**
  * Claim + dispatch the task, then return the run id without waiting for the
  * agent to finish. The client connects to /stream to consume events.
+ *
+ * When the concurrency cap is full the task is queued instead and the
+ * route answers 202 with its queue position; the dispatcher drains the
+ * queue FIFO as running tasks finish.
  *
  * The dispatcher publishes events to the hub regardless of whether anyone is
  * subscribed, so the run still completes and persists even if /stream is
@@ -26,11 +30,14 @@ export async function POST(
 ): Promise<Response> {
   const { id } = await ctx.params;
   try {
-    const { runId, done } = dispatchTask(id);
+    const result = runTaskWithCap(id);
+    if (result.queued) {
+      return accepted({ queued: true, position: result.position });
+    }
     // Detach the completion promise. The unhandled-rejection guard is a
     // belt-and-suspenders — dispatchTask's `finally` already records failure.
-    done.catch(() => {});
-    return ok({ runId });
+    result.done.catch(() => {});
+    return ok({ runId: result.runId });
   } catch (err) {
     if (err instanceof DispatchError) {
       if (err.code === "task_not_found" || err.code === "project_not_found") {

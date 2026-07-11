@@ -174,16 +174,19 @@ describe("dispatchTask", () => {
     await done;
 
     // After the run completes the hub still has the buffered transcript.
-    // The first event is the [drydock] no-git-repo note, then "first", then
-    // a synthesized terminator carrying the overall outcome (the agent's own
-    // exit event is intentionally suppressed — see dispatch.ts).
+    // The first event is the [drydock] no-git-repo note, then the autonomy
+    // profile note, then "first", then a synthesized terminator carrying
+    // the overall outcome (the agent's own exit event is intentionally
+    // suppressed — see dispatch.ts).
     const received: AgentEvent[] = [];
     for await (const e of subscribe(runId)) received.push(e);
-    expect(received).toHaveLength(3);
+    expect(received).toHaveLength(4);
     expect(received[0]).toMatchObject({ type: "stdout" });
     expect(received[0].data).toMatch(/not a git repo/);
-    expect(received[1]).toEqual({ type: "stdout", data: "first" });
-    expect(received[2]).toEqual({ type: "exit", data: "success", code: 0 });
+    expect(received[1]).toMatchObject({ type: "stdout" });
+    expect(received[1].data).toMatch(/autonomy profile: edits/);
+    expect(received[2]).toEqual({ type: "stdout", data: "first" });
+    expect(received[3]).toEqual({ type: "exit", data: "success", code: 0 });
 
     // And there's exactly one run row for this task.
     expect(listRunsForTask(t.id)).toHaveLength(1);

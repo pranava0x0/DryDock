@@ -13,6 +13,11 @@ export function created<T>(data: T): NextResponse {
   return NextResponse.json(data, { status: 201 });
 }
 
+/** 202: request accepted but the work is parked (e.g. task queued at cap). */
+export function accepted<T>(data: T): NextResponse {
+  return NextResponse.json(data, { status: 202 });
+}
+
 export function badRequest(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 400 });
 }

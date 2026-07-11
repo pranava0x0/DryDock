@@ -1,7 +1,15 @@
-import { getTask, updateTask, claimTask } from "../db/tasks";
+import {
+  getTask,
+  updateTask,
+  claimTask,
+  claimTaskRespectingCap,
+  countInFlightTasks,
+  nextQueuedTask,
+  queuePosition,
+} from "../db/tasks";
 import { getProject } from "../db/projects";
-import { createRun, completeRun } from "../db/runs";
-import { getBooleanSetting, getSetting } from "../db/settings";
+import { createRun, completeRun, type FailureReason } from "../db/runs";
+import { getBooleanSetting, getNumberSetting, getSetting } from "../db/settings";
 import { matchRoute, parseRules, ROUTING_RULES_KEY } from "../routing/rules";
 import { getProvider } from "../providers";
 import type { AgentEvent, AgentProvider } from "../providers/types";
@@ -24,6 +32,20 @@ import { runQualityGate as defaultRunQualityGate } from "./gate";
  * open a PR manually before cleanup.
  */
 export const AUTO_CLEANUP_WORKTREE_KEY = "auto_cleanup_worktree";
+
+/**
+ * Settings key for the dispatch concurrency cap. Tasks that would exceed it
+ * are queued (status 'queued') and drained FIFO as running tasks finish.
+ */
+export const MAX_CONCURRENT_RUNS_KEY = "max_concurrent_runs";
+
+export const DEFAULT_MAX_CONCURRENT_RUNS = 3;
+
+export function maxConcurrentRuns(): number {
+  const n = getNumberSetting(MAX_CONCURRENT_RUNS_KEY);
+  if (n === null) return DEFAULT_MAX_CONCURRENT_RUNS;
+  return Math.max(1, Math.floor(n));
+}
 
 export interface DispatchResult {
   runId: string;
@@ -48,19 +70,46 @@ export class DispatchError extends Error {
   }
 }
 
+interface ActiveRun {
+  controller: AbortController;
+  /**
+   * Set by cancelActiveRun so the finalizer can distinguish "user hit
+   * Stop" from every other abort/kill path when writing failure_reason.
+   */
+  cancelRequested: boolean;
+}
+
 /**
- * In-memory map of run id → AbortController. The SSE route uses this to
- * cancel a running agent when the client disconnects (the plan calls out
- * "SSE cleanup — abort subprocess if client disconnects").
+ * In-memory map of run id → live-run state. The cancel route uses this to
+ * kill a running agent on demand; the SSE route only checks liveness (a
+ * dropped stream connection must NOT kill a healthy run — phone clients
+ * disconnect constantly).
  *
  * In-memory is fine because the controller is meaningful only while the
  * Node process that spawned the child is alive — if Next.js restarts, the
  * subprocess is dead anyway and the controller is moot.
  */
-const ACTIVE_RUNS = new Map<string, AbortController>();
+const ACTIVE_RUNS = new Map<string, ActiveRun>();
 
 export function getActiveRunController(runId: string): AbortController | undefined {
-  return ACTIVE_RUNS.get(runId);
+  return ACTIVE_RUNS.get(runId)?.controller;
+}
+
+/**
+ * Kill a live run at the user's request. Returns false when the run isn't
+ * active anymore (already terminal) — callers treat that as idempotent
+ * success, not an error.
+ *
+ * Scope note: this kills the *agent* subprocess. If the agent had already
+ * exited 0 and the quality gate is mid-flight, the cancel arrived too late
+ * and the run completes normally — completed work isn't discarded.
+ */
+export function cancelActiveRun(runId: string): boolean {
+  const active = ACTIVE_RUNS.get(runId);
+  if (!active) return false;
+  active.cancelRequested = true;
+  active.controller.abort();
+  return true;
 }
 
 export interface DispatchOptions {
@@ -99,6 +148,13 @@ export interface DispatchOptions {
    * `auto_cleanup_worktree` setting from the DB.
    */
   shouldAutoCleanupWorktree?: () => boolean;
+  /**
+   * Internal: the caller (runTaskWithCap) already performed the atomic
+   * claim inside its cap transaction — don't claim again. Never set this
+   * from a route directly; skipping the claim without having won it breaks
+   * the duplicate-dispatch safety net.
+   */
+  skipClaim?: boolean;
 }
 
 /**
@@ -127,12 +183,14 @@ export function dispatchTask(
     );
   }
 
-  const claimed = claimTask(taskId);
-  if (!claimed) {
-    throw new DispatchError(
-      `Task ${taskId} is not pending (likely already claimed)`,
-      "already_claimed",
-    );
+  if (!options.skipClaim) {
+    const claimed = claimTask(taskId);
+    if (!claimed) {
+      throw new DispatchError(
+        `Task ${taskId} is not pending (likely already claimed)`,
+        "already_claimed",
+      );
+    }
   }
 
   // Build the prompt first so routing rules can match against it.
@@ -153,7 +211,8 @@ export function dispatchTask(
   const providerFactory = options.providerFactory ?? getProvider;
   const provider = providerFactory(effectiveProvider);
   const controller = new AbortController();
-  ACTIVE_RUNS.set(run.id, controller);
+  const activeRun: ActiveRun = { controller, cancelRequested: false };
+  ACTIVE_RUNS.set(run.id, activeRun);
   const timeoutMs = options.timeoutMs ?? agentTimeoutMs();
   const isGitRepoFn = options.isGitRepo ?? defaultIsGitRepo;
   const createWorktreeFn = options.createWorktree ?? defaultCreateWorktree;
@@ -236,11 +295,18 @@ export function dispatchTask(
         publish(run.id, { type: "stdout", data: note });
         stdoutLines.push(note);
       }
+      {
+        // Make the blast radius legible in every transcript.
+        const note = `[drydock] autonomy profile: ${project.autonomy}`;
+        publish(run.id, { type: "stdout", data: note });
+        stdoutLines.push(note);
+      }
       for await (const event of provider.run(prompt, {
         cwd,
         signal: controller.signal,
         timeoutMs,
         model: effectiveModel,
+        autonomy: project.autonomy,
       })) {
         if (event.type === "stdout") stdoutLines.push(event.data);
         if (event.type === "stderr") stderrLines.push(event.data);
@@ -271,6 +337,16 @@ export function dispatchTask(
       publish(run.id, { type: "stderr", data: `dispatch error: ${message}` });
       exitCode = -1;
     } finally {
+      // A user cancel only counts if it actually stopped the agent — when
+      // the agent had already exited 0, the cancel came too late and the
+      // run finishes on its own merits (completed work isn't discarded).
+      const cancelled = activeRun.cancelRequested && exitCode !== 0;
+      if (cancelled) {
+        const note = "[drydock] run cancelled by user";
+        stderrLines.push(note);
+        publish(run.id, { type: "stderr", data: note });
+      }
+
       // Quality gate: only run when the agent itself succeeded AND the
       // project has a `test_command` configured. A failing gate flips
       // success to failure so the user sees a single, decisive verdict.
@@ -353,6 +429,17 @@ export function dispatchTask(
         }
       }
 
+      // Why the run failed, for analytics and the cancel path. Order
+      // matters: an explicit user cancel wins; then "agent exited clean
+      // but the gate demoted it"; everything else is an agent exit.
+      const failureReason: FailureReason | null = succeeded
+        ? null
+        : cancelled
+          ? "cancelled"
+          : exitCode === 0
+            ? "gate_failed"
+            : "agent_exit";
+
       completeRun(run.id, {
         status: succeeded ? "success" : "failed",
         output: stdoutLines.join("\n"),
@@ -362,6 +449,7 @@ export function dispatchTask(
         cost_usd: costUsd,
         gate_status: gateStatus,
         gate_output: gateOutput,
+        failure_reason: failureReason,
       });
       updateTask(taskId, { status: succeeded ? "done" : "failed" });
       // Synthesized terminator: the only `exit` event ever published for
@@ -373,10 +461,81 @@ export function dispatchTask(
         code: succeeded ? 0 : (exitCode ?? -1),
       });
       ACTIVE_RUNS.delete(run.id);
+      // This run just freed a concurrency slot — pull the next queued task
+      // (if any) into it. Never let a drain problem break run finalization.
+      try {
+        drainQueue(options);
+      } catch (err) {
+        console.error("[drydock] queue drain failed:", err);
+      }
     }
   })();
 
   return { runId: run.id, done };
+}
+
+export type RunOrQueueResult =
+  | { queued: true; position: number }
+  | ({ queued: false } & DispatchResult);
+
+/**
+ * The cap-aware entry point routes use instead of calling dispatchTask
+ * directly: claim a slot if one is free, otherwise park the task in the
+ * queue. The count-and-claim happens inside one DB transaction so parallel
+ * calls can't both squeeze past the cap.
+ */
+export function runTaskWithCap(
+  taskId: string,
+  options: DispatchOptions = {},
+): RunOrQueueResult {
+  const task = getTask(taskId);
+  if (!task) {
+    throw new DispatchError(`Task not found: ${taskId}`, "task_not_found");
+  }
+  const outcome = claimTaskRespectingCap(taskId, maxConcurrentRuns());
+  if (outcome === "conflict") {
+    throw new DispatchError(
+      `Task ${taskId} is not pending (likely already claimed)`,
+      "already_claimed",
+    );
+  }
+  if (outcome === "queued") {
+    return { queued: true, position: queuePosition(taskId) ?? 1 };
+  }
+  return { queued: false, ...dispatchTask(taskId, { ...options, skipClaim: true }) };
+}
+
+/**
+ * Dispatch queued tasks while concurrency slots are free. Called from run
+ * finalization; also safe to call opportunistically. dispatchTask's own
+ * claim (queued → claimed CAS) is the dedupe against concurrent drains.
+ *
+ * Tasks that turn out to be undispatchable (project gone, etc.) are marked
+ * failed rather than left queued — a wedged head would otherwise block the
+ * whole queue forever.
+ */
+function drainQueue(options: DispatchOptions): void {
+  const max = maxConcurrentRuns();
+  while (countInFlightTasks() < max) {
+    const next = nextQueuedTask();
+    if (!next) return;
+    try {
+      dispatchTask(next.id, { ...options, skipClaim: false });
+    } catch (err) {
+      if (err instanceof DispatchError && err.code === "already_claimed") {
+        // Another drain won the claim — re-check capacity and move on.
+        continue;
+      }
+      if (err instanceof DispatchError) {
+        updateTask(next.id, { status: "failed" });
+        console.error(
+          `[drydock] queued task ${next.id} undispatchable (${err.code}) — marked failed`,
+        );
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 function agentTimeoutMs(): number {
