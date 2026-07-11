@@ -10,6 +10,8 @@ export interface TaskCardProps {
   task: Task;
   /** Optional: most-recent run summary, used to show cost + gate verdict. */
   latestRun?: Run | null;
+  /** Optional: thread rollup (turn count + total spend across all runs). */
+  runAggregate?: { run_count: number; total_cost_usd: number | null } | null;
   onRunStarted: (runId: string) => void;
   onDeleted: () => void;
   /**
@@ -22,6 +24,7 @@ export interface TaskCardProps {
 export function TaskCard({
   task,
   latestRun,
+  runAggregate,
   onRunStarted,
   onDeleted,
   onRetried,
@@ -146,7 +149,8 @@ export function TaskCard({
       {task.branch ||
       task.pr_url ||
       latestRun?.cost_usd != null ||
-      latestRun?.gate_status ? (
+      latestRun?.gate_status ||
+      (runAggregate && runAggregate.run_count > 1) ? (
         <dl className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
           {task.branch ? (
             <div className="flex items-center gap-1">
@@ -169,7 +173,25 @@ export function TaskCard({
               </dd>
             </div>
           ) : null}
-          {latestRun?.cost_usd != null ? (
+          {runAggregate && runAggregate.run_count > 1 ? (
+            <div className="flex items-center gap-1">
+              <dt className="sr-only">Thread</dt>
+              <dd className="rounded bg-kraken-ice/10 px-1.5 py-0.5 text-[10px] font-medium text-kraken-ice">
+                {runAggregate.run_count} turns
+              </dd>
+            </div>
+          ) : null}
+          {/* Total spend across the thread when there are multiple runs;
+              otherwise the single run's cost. */}
+          {runAggregate?.total_cost_usd != null &&
+          runAggregate.run_count > 1 ? (
+            <div className="flex items-center gap-1">
+              <dt className="sr-only">Total cost</dt>
+              <dd className="text-zinc-300">
+                ${runAggregate.total_cost_usd.toFixed(4)} total
+              </dd>
+            </div>
+          ) : latestRun?.cost_usd != null ? (
             <div className="flex items-center gap-1">
               <dt className="sr-only">Cost</dt>
               <dd className="text-zinc-300">

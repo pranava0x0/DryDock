@@ -23,9 +23,14 @@ export default function ProjectPage({
 }) {
   const { id } = use(params);
   const [project, setProject] = useState<Project | null>(null);
-  const [tasks, setTasks] = useState<Array<Task & { latest_run: Run | null }>>(
-    [],
-  );
+  const [tasks, setTasks] = useState<
+    Array<
+      Task & {
+        latest_run: Run | null;
+        run_aggregate?: { run_count: number; total_cost_usd: number | null };
+      }
+    >
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -173,6 +178,7 @@ export default function ProjectPage({
                 <TaskCard
                   task={task}
                   latestRun={task.latest_run}
+                  runAggregate={task.run_aggregate}
                   onRunStarted={() => {
                     setStreamTaskId(task.id);
                     setStreamKey((k) => k + 1);
@@ -214,6 +220,12 @@ export default function ProjectPage({
           taskId={streamTaskId}
           subscriptionKey={streamKey}
           onClose={() => setStreamTaskId(null)}
+          onFollowup={() => {
+            // A follow-up dispatched: re-subscribe to the new run and let
+            // the poll flip the badge back to running.
+            setStreamKey((k) => k + 1);
+            void refresh();
+          }}
         />
       ) : null}
     </>
