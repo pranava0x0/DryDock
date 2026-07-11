@@ -35,13 +35,14 @@ describe("provider registry", () => {
       for await (const e of provider.run("test prompt", { cwd: "/tmp" })) {
         events.push(e);
       }
-      // 3 events: stdout note + usage event with zeros + exit 0.
-      expect(events).toHaveLength(3);
-      expect(events[0].type).toBe("stdout");
-      expect(events[1].type).toBe("usage");
-      expect(events[2].type).toBe("exit");
-      if (events[2].type === "exit") {
-        expect(events[2].code).toBe(0);
+      // 4 events: session id + stdout note + usage event with zeros + exit 0.
+      expect(events).toHaveLength(4);
+      expect(events[0].type).toBe("session");
+      expect(events[1].type).toBe("stdout");
+      expect(events[2].type).toBe("usage");
+      expect(events[3].type).toBe("exit");
+      if (events[3].type === "exit") {
+        expect(events[3].code).toBe(0);
       }
     } finally {
       if (original === undefined) delete process.env.DRYDOCK_PROVIDER_STUB;

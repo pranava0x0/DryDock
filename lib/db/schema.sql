@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS runs (
   -- NULL for successful runs (and for failed rows written before this
   -- column existed).
   failure_reason TEXT,
+  -- Provider session/thread id (claude only) so a follow-up turn can
+  -- `--resume` the same conversation. NULL when the provider didn't report
+  -- one (e.g. gemini, or a run that errored before the init event).
+  session_id    TEXT,
+  -- The run this one continues (a follow-up turn). NULL for first runs.
+  -- Lets the UI render a task's runs as a thread.
+  parent_run_id TEXT,
   started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
   completed_at  INTEGER
 );

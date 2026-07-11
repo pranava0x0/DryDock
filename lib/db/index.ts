@@ -91,6 +91,8 @@ function migrate(db: DB): void {
   ensure("runs", "gate_output", "gate_output TEXT");
   ensure("runs", "matched_rule", "matched_rule TEXT");
   ensure("runs", "failure_reason", "failure_reason TEXT");
+  ensure("runs", "session_id", "session_id TEXT");
+  ensure("runs", "parent_run_id", "parent_run_id TEXT");
 
   // settings + backlog_items: covered by the CREATE TABLE IF NOT EXISTS
   // statements in schema.sql for fresh DBs. For databases that existed

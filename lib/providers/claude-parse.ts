@@ -39,6 +39,7 @@ function asNumber(value: unknown): number | null {
 export type ClaudeLine =
   | { kind: "text"; data: string }
   | { kind: "usage"; usage: ClaudeUsage }
+  | { kind: "session"; sessionId: string }
   | { kind: "ignored" }
   | { kind: "garbage"; raw: string };
 
@@ -53,6 +54,14 @@ export function parseClaudeLine(line: string): ClaudeLine {
   if (!isObject(parsed)) return { kind: "garbage", raw: line };
 
   const type = parsed.type;
+
+  // The init event (first line of a stream-json run) carries the session id
+  // we need to `claude -p --resume <id>` for a follow-up turn. It arrives
+  // before any assistant/result event, so capturing it here is the reliable
+  // path; the `result` event's session_id (parsed below) is the backup.
+  if (type === "system" && typeof parsed.session_id === "string") {
+    return { kind: "session", sessionId: parsed.session_id };
+  }
 
   if (type === "assistant" && isObject(parsed.message)) {
     const message = parsed.message;

@@ -52,7 +52,14 @@ export type AgentEvent =
       tokensIn: number | null;
       tokensOut: number | null;
       costUsd: number | null;
-    };
+    }
+  /**
+   * The provider's session/thread id, emitted once when first seen (claude
+   * only, currently). The dispatcher persists it to `runs.session_id` so a
+   * follow-up turn can resume the same conversation. Does not terminate the
+   * stream; not forwarded to SSE viewers (it's internal plumbing).
+   */
+  | { type: "session"; sessionId: string };
 
 export interface AgentRunOptions {
   /** Absolute path to the directory the subprocess should run inside. */
@@ -75,6 +82,12 @@ export interface AgentRunOptions {
    * Undefined = 'edits'.
    */
   autonomy?: AutonomyLevel;
+  /**
+   * Resume an existing session/thread instead of starting fresh (claude
+   * `--resume <id>`). Set for follow-up turns. Null / undefined = new
+   * session. Only the claude provider honours it today.
+   */
+  resumeSessionId?: string | null;
 }
 
 /**
