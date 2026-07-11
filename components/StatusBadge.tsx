@@ -4,6 +4,7 @@ import type { TaskStatus } from "@/lib/db/tasks";
 // ternaries) so the design system stays in one place.
 const STYLES: Record<TaskStatus, string> = {
   pending: "bg-zinc-500/15 text-zinc-300 ring-zinc-500/30",
+  queued: "bg-sky-500/15 text-sky-300 ring-sky-500/30",
   claimed: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
   running: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
   done: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
@@ -12,6 +13,7 @@ const STYLES: Record<TaskStatus, string> = {
 
 const LABELS: Record<TaskStatus, string> = {
   pending: "Pending",
+  queued: "Queued",
   claimed: "Claimed",
   running: "Running",
   done: "Done",

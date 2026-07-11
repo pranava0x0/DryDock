@@ -28,10 +28,12 @@ export function TaskCard({
 }: TaskCardProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const handleRun = async () => {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch(`/api/tasks/${task.id}/run`, { method: "POST" });
       const data = await res.json();
@@ -39,7 +41,36 @@ export function TaskCard({
         setError(data.error ?? "Failed to start run");
         return;
       }
+      if (data.queued) {
+        // Concurrency cap is full — the task parked instead of starting.
+        setNotice(`Queued — #${data.position} in line`);
+        onRetried?.();
+        return;
+      }
       onRunStarted(data.runId);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleStop = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/cancel`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? "Failed to stop");
+        return;
+      }
+      // Idempotent server-side: `cancelled: false` just means the run had
+      // already finished — refresh either way and let the status speak.
+      onRetried?.();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -88,6 +119,12 @@ export function TaskCard({
   // or terminal. Hiding the button is clearer than disabling it.
   const canRun = task.status === "pending";
   const canRetry = task.status === "failed";
+  // Stop covers the whole pre-terminal band: un-queue a queued task, kill
+  // a claimed/running one.
+  const canStop =
+    task.status === "queued" ||
+    task.status === "claimed" ||
+    task.status === "running";
 
   return (
     <article className="rounded-lg border border-kraken-boundless bg-kraken-surface p-4">
@@ -149,6 +186,12 @@ export function TaskCard({
               </dd>
             </div>
           ) : null}
+          {latestRun?.failure_reason === "cancelled" ? (
+            <div className="flex items-center gap-1">
+              <dt className="sr-only">Failure reason</dt>
+              <dd className="text-zinc-400">cancelled by you</dd>
+            </div>
+          ) : null}
           {latestRun?.gate_status ? (
             <div className="flex items-center gap-1">
               <dt className="sr-only">Quality gate</dt>
@@ -195,6 +238,20 @@ export function TaskCard({
             {busy ? "Retrying…" : "Retry"}
           </button>
         ) : null}
+        {canStop ? (
+          <button
+            type="button"
+            onClick={handleStop}
+            disabled={busy}
+            className="inline-flex min-h-[44px] items-center rounded-md border border-kraken-alert/60 px-4 text-sm font-medium text-kraken-alert transition hover:bg-kraken-alert/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy
+              ? "Stopping…"
+              : task.status === "queued"
+                ? "Un-queue"
+                : "Stop"}
+          </button>
+        ) : null}
         {task.status !== "pending" ? (
           <button
             type="button"
@@ -217,6 +274,11 @@ export function TaskCard({
       {error ? (
         <p className="mt-2 text-xs text-red-300" role="alert">
           {error}
+        </p>
+      ) : null}
+      {notice ? (
+        <p className="mt-2 text-xs text-sky-300" role="status">
+          {notice}
         </p>
       ) : null}
     </article>
