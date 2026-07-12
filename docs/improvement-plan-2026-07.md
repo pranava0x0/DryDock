@@ -1,5 +1,7 @@
 # DryDock Improvement Plan & Spec — July 2026
 
+> **Status (2026-07-12):** **EP-1 (Lock the front door)** and **EP-2 (Tasks become resumable threads)** shipped in PR #7 — auth middleware + loopback bind, autonomy profiles, concurrency cap/queue/drain + restart reconciliation, cancel, session capture, follow-up turns via `claude --resume`, retry-with-feedback, and the thread UI. Seven Codex/self-review findings were fixed in the same PR (DD-011…DD-015). **EP-3+ (close the git loop: diff view → commit → push → PR/merge) is the next epic and remains unstarted.** The sequencing and specs below are unchanged from the original plan.
+
 Research-grounded plan for the next generation of DryDock. Sources: full codebase inventory (this repo, July 2026), OpenAI Codex product evolution (Sept 2025 – July 2026), Google Antigravity 1.0 → 2.0 (Nov 2025 – June 2026), Claude Code ecosystem (mid-2026), and a mining pass over pranava0x0's own GitHub review history (April – July 2026) for the practices this plan should bake in rather than fight.
 
 ---
