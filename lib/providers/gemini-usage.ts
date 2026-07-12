@@ -2,6 +2,7 @@ import { promises as fs, createReadStream } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
+import { mayContainRecentTurns, widestCutoff } from "./usage-mtime";
 
 /**
  * Google AI (Antigravity) activity reader.
@@ -73,6 +74,8 @@ export async function readGeminiUsage(
   const monthlyCutoff = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
   );
+  // Skip log files last touched before every window (see usage-mtime).
+  const skipBefore = widestCutoff(monthlyCutoff, weeklyCutoff);
 
   const weekly = empty();
   const monthly = empty();
@@ -104,8 +107,10 @@ export async function readGeminiUsage(
     let scannedThisConv = false;
     for (const f of logFiles) {
       if (!f.endsWith(".jsonl") && !f.endsWith(".txt")) continue;
+      const logPath = join(logsDir, f);
+      if (!(await mayContainRecentTurns(logPath, skipBefore))) continue;
       scannedThisConv = true;
-      await aggregateLog(join(logsDir, f), conv, {
+      await aggregateLog(logPath, conv, {
         weeklyCutoff,
         monthlyCutoff,
         weekly,
