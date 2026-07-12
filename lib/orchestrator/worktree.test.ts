@@ -163,6 +163,42 @@ describe("createWorktree", () => {
     createdPaths.push(second.worktreePath);
     expect(existsSync(second.worktreePath)).toBe(true);
   });
+
+  it("re-creates over a leftover worktree AND branch from the same task", async () => {
+    const taskId = "leftover1";
+    const first = await createWorktree({
+      projectPath: projectDir,
+      projectId: "proj-lo",
+      taskId,
+      taskTitle: "same task",
+    });
+    createdPaths.push(first.worktreePath);
+
+    // Simulate a FAILED run kept for inspection: the worktree is still
+    // registered and the branch still exists. A fresh re-dispatch (retry, or
+    // an over-cap follow-up drained later) calls createWorktree again with the
+    // same id + title → the same branch name. The old `-b` add collided here
+    // and the dispatcher silently fell back to mutating the project checkout.
+    const second = await createWorktree({
+      projectPath: projectDir,
+      projectId: "proj-lo",
+      taskId,
+      taskTitle: "same task",
+    });
+    createdPaths.push(second.worktreePath);
+
+    expect(second.branch).toBe(first.branch);
+    expect(existsSync(join(second.worktreePath, "README"))).toBe(true);
+    const { stdout } = await execFileP("git", [
+      "-C",
+      projectDir,
+      "worktree",
+      "list",
+      "--porcelain",
+    ]);
+    expect(stdout).toContain(second.worktreePath);
+    expect(stdout).toContain(`branch refs/heads/${second.branch}`);
+  });
 });
 
 describe("removeWorktree", () => {

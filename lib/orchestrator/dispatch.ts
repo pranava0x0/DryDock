@@ -313,11 +313,15 @@ export class FollowupError extends Error {
  * The follow-up run does NOT re-run routing rules: steering stays on the
  * parent run's provider so a rule can't silently switch models mid-thread.
  */
+export type FollowupResult =
+  | { queued: true; position: number }
+  | { queued: false; resumed: true; runId: string; done: Promise<void> };
+
 export function followUpTask(
   taskId: string,
   feedback: string,
   options: DispatchOptions = {},
-): DispatchResult {
+): FollowupResult {
   const task = getTask(taskId);
   if (!task) {
     throw new FollowupError(`Task not found: ${taskId}`, "task_not_found");
@@ -347,7 +351,34 @@ export function followUpTask(
     );
   }
 
-  // Follow-up stays on the parent run's provider; no routing re-match.
+  // A follow-up spawns a provider subprocess just like /run, so it must
+  // honour the concurrency cap rather than starting immediately because it
+  // happens to resume a session. Re-arm the task and claim a slot atomically.
+  updateTask(taskId, { status: "pending" });
+  const outcome = claimTaskRespectingCap(taskId, maxConcurrentRuns());
+  if (outcome === "conflict") {
+    throw new FollowupError(
+      `Task ${taskId} could not be claimed for a follow-up (raced?)`,
+      "not_terminal",
+    );
+  }
+  if (outcome === "queued") {
+    // No free slot. Fold the feedback into the description so the fresh run
+    // the drain eventually starts still carries the ask, and report queued so
+    // the caller stops waiting on a runId. A queued follow-up forgoes
+    // --resume: once a slot frees the session may be gone, so it re-runs
+    // fresh with the accumulated context in the prompt.
+    const queuedTask = getTask(taskId);
+    if (queuedTask) {
+      updateTask(taskId, {
+        description: `${queuedTask.description}\n\n## Follow-up\n${feedback.trim()}`,
+      });
+    }
+    return { queued: true, position: queuePosition(taskId) ?? 1 };
+  }
+
+  // Claimed a slot — resume the parent session now. Follow-up stays on the
+  // parent run's provider; no routing re-match.
   const effectiveProvider: ProviderName = parent.provider;
   const run = createRun(taskId, effectiveProvider, {
     matchedRule: `followup:${parent.id.slice(0, 8)}`,
@@ -423,7 +454,7 @@ export function followUpTask(
     },
   });
 
-  return { runId: run.id, done };
+  return { queued: false, resumed: true, runId: run.id, done };
 }
 
 /** Push a line to a buffer AND publish it live under one call. */

@@ -41,9 +41,12 @@ export async function POST(
   if (!prompt.trim()) return badRequest("`prompt` is required");
 
   try {
-    const { runId, done } = followUpTask(id, prompt);
-    done.catch(() => {});
-    return ok({ runId, resumed: true });
+    const result = followUpTask(id, prompt);
+    if (result.queued) {
+      return ok({ queued: true, position: result.position, resumed: false });
+    }
+    result.done.catch(() => {});
+    return ok({ runId: result.runId, resumed: true });
   } catch (err) {
     if (err instanceof FollowupError) {
       if (err.code === "task_not_found" || err.code === "project_not_found") {

@@ -107,10 +107,15 @@ export interface CreateWorktreeResult {
  *   branch when they kick a task off; this is a deliberate choice so the
  *   tool doesn't second-guess them.
  *
- * If the worktree directory already exists from a previous run with the
- * same task id (shouldn't normally happen since task ids are unique, but
- * could after a retry of a task whose Phase-2 worktree path was kept) we
- * remove it first so `git worktree add` doesn't error out.
+ * A prior run of this same task id may have left a worktree registered
+ * and/or the branch behind — a failed run kept for inspection, or a
+ * retry/fresh follow-up re-dispatched through the queue. If we let any of
+ * that collide, `git worktree add` throws and the dispatcher falls back to
+ * running in the project checkout, mutating the user's main tree. So we make
+ * re-creation deterministic before adding: drop a still-registered worktree
+ * at this path, delete a leftover directory, prune registrations whose dir
+ * we just removed, then add with `-B` so a surviving branch is reset to the
+ * base ref (the task is starting over from HEAD) instead of colliding.
  */
 export async function createWorktree(
   input: CreateWorktreeInput,
@@ -123,15 +128,30 @@ export async function createWorktree(
   // Ensure parent dir exists (mkdir -p). git worktree add wants the leaf
   // directory not to exist; the parents must exist.
   await mkdir(join(worktreeRoot(), input.projectId), { recursive: true });
-  // Best-effort cleanup of any leftover dir at the target path.
+  // Free the branch by dropping any worktree still checked out at this path,
+  // then clear a leftover dir, then prune the now-dangling registration.
+  await execFileP("git", [
+    "-C",
+    input.projectPath,
+    "worktree",
+    "remove",
+    "--force",
+    path,
+  ]).catch(() => {});
   await rm(path, { recursive: true, force: true });
+  await execFileP("git", [
+    "-C",
+    input.projectPath,
+    "worktree",
+    "prune",
+  ]).catch(() => {});
 
   await execFileP("git", [
     "-C",
     input.projectPath,
     "worktree",
     "add",
-    "-b",
+    "-B",
     branch,
     path,
     baseRef,

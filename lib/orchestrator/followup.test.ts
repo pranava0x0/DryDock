@@ -6,11 +6,29 @@ import { _resetDbForTests, getDb } from "../db/index";
 import { createProject } from "../db/projects";
 import { createTask, getTask, updateTask } from "../db/tasks";
 import { listRunsForTask, getLatestRunForTask } from "../db/runs";
+import { setSetting } from "../db/settings";
 import {
   dispatchTask,
   followUpTask,
   FollowupError,
+  MAX_CONCURRENT_RUNS_KEY,
 } from "./dispatch";
+
+/**
+ * followUpTask now returns a queued-or-running union (it respects the
+ * concurrency cap). These execution tests seed a single task under the
+ * default cap, so they always take the running path — narrow to it and fail
+ * loudly if a follow-up ever unexpectedly queues.
+ */
+function runFollowup(
+  ...args: Parameters<typeof followUpTask>
+): { queued: false; resumed: true; runId: string; done: Promise<void> } {
+  const result = followUpTask(...args);
+  if (result.queued) {
+    throw new Error("expected a running follow-up but it was queued");
+  }
+  return result;
+}
 import { _resetHubForTests } from "./hub";
 import type {
   AgentEvent,
@@ -154,7 +172,7 @@ describe("followUpTask execution", () => {
     const parent = getLatestRunForTask(task.id);
 
     let resumedWith: string | null | undefined;
-    const { done } = followUpTask(task.id, "now also update the docs", {
+    const { done } = runFollowup(task.id,"now also update the docs", {
       providerFactory: () =>
         sessionProvider("sess-A", {
           record: (o) => {
@@ -179,7 +197,7 @@ describe("followUpTask execution", () => {
 
   it("costs accumulate across the whole chain", async () => {
     const { task } = await seedTerminalTaskWithSession({ sessionId: "sess-A" });
-    const { done } = followUpTask(task.id, "one more thing", {
+    const { done } = runFollowup(task.id,"one more thing", {
       providerFactory: () => sessionProvider("sess-A"),
     });
     await done;
@@ -207,7 +225,7 @@ describe("followUpTask execution", () => {
 
     let ranIn: string | undefined;
     let recreateCalled = false;
-    const { done } = followUpTask(task.id, "continue", {
+    const { done } = runFollowup(task.id,"continue", {
       providerFactory: () => ({
         name: "claude",
         async *run(_p: string, o: AgentRunOptions) {
@@ -247,7 +265,7 @@ describe("followUpTask execution", () => {
       worktreePath: "/tmp/wt/reattached",
       branch: wt.branch,
     };
-    const { done } = followUpTask(task.id, "resume please", {
+    const { done } = runFollowup(task.id,"resume please", {
       providerFactory: () => ({
         name: "claude",
         async *run(_p: string, o: AgentRunOptions) {
@@ -272,11 +290,34 @@ describe("followUpTask execution", () => {
 
   it("captures a fresh session id from the follow-up run too", async () => {
     const { task } = await seedTerminalTaskWithSession({ sessionId: "sess-A" });
-    const { done } = followUpTask(task.id, "keep going", {
+    const { done } = runFollowup(task.id,"keep going", {
       // Resume may return a rotated session id; we persist whatever we see.
       providerFactory: () => sessionProvider("sess-A-rotated"),
     });
     await done;
     expect(getLatestRunForTask(task.id)?.session_id).toBe("sess-A-rotated");
+  });
+});
+
+describe("followUpTask concurrency cap", () => {
+  it("queues instead of bypassing the cap when no slot is free", async () => {
+    setSetting(MAX_CONCURRENT_RUNS_KEY, "1");
+    const { task } = await seedTerminalTaskWithSession({ sessionId: "sess-A" });
+
+    // Occupy the only slot with an unrelated in-flight task.
+    const busy = createTask({
+      project_id: task.project_id,
+      title: "busy",
+      description: "holds the slot",
+    });
+    updateTask(busy.id, { status: "running" });
+
+    // The finished task HAS a resumable session — the old bug started it
+    // immediately, jumping the queue a /run request would have to wait in.
+    const result = followUpTask(task.id, "keep going");
+    expect(result.queued).toBe(true);
+    expect(getTask(task.id)?.status).toBe("queued");
+    // The follow-up ask is folded into the description for the eventual run.
+    expect(getTask(task.id)?.description).toContain("keep going");
   });
 });
