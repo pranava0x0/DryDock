@@ -37,15 +37,24 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: "Invalid token" }, { status: 401 });
   }
 
+  // Mark Secure for every non-loopback host. Deriving it from the request
+  // host rather than the client-settable x-forwarded-proto means a plain-http
+  // request can't coax the session cookie out without the Secure flag; only a
+  // genuine localhost dev session (which the tunnel can't reach — the server
+  // binds loopback) opts out so http://localhost works.
+  const host = (request.headers.get("host") ?? "")
+    .replace(/:\d+$/, "")
+    .toLowerCase();
+  const isLoopback =
+    host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+
   const response = ok({ authenticated: true });
   response.cookies.set(COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
     maxAge: COOKIE_MAX_AGE_S,
-    // Secure over the tunnel (https); localhost dev stays plain http.
-    secure: request.nextUrl.protocol === "https:" ||
-      request.headers.get("x-forwarded-proto") === "https",
+    secure: !isLoopback,
   });
   return response;
 }

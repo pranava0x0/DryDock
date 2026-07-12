@@ -4,9 +4,9 @@
   "private": true,
   "description": "Personal project orchestrator. Dispatches coding tasks to Claude Code / Gemini CLI subprocesses; mobile-first PWA.",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 127.0.0.1",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

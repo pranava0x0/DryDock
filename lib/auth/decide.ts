@@ -63,6 +63,12 @@ export interface RequestFacts {
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+// The localhost bypass trusts the Host header, which a caller can forge. That
+// is only safe because the server binds loopback (`next dev/start -H
+// 127.0.0.1`), so a forged `Host: localhost` can't arrive from off-box — the
+// origin port isn't reachable over the LAN. Cloudflare-fronted requests are
+// excluded up front via hasCloudflareHeaders so the tunnel can't reach it
+// either. If that bind ever changes, this check stops being sound.
 export function isLocalRequest(facts: RequestFacts): boolean {
   if (facts.hasCloudflareHeaders) return false;
   if (!facts.host) return false;

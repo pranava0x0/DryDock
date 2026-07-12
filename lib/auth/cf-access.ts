@@ -43,6 +43,12 @@ interface JwksCache {
 
 let jwksCache: JwksCache | null = null;
 const JWKS_TTL_MS = 10 * 60 * 1000;
+// Floor between JWKS refetches. Without it, a stream of tokens carrying
+// random unknown `kid`s would force one origin→Cloudflare certs fetch each,
+// since a cache miss otherwise always refetches — an unauthenticated fetch-
+// amplification lever. Cloudflare publishes old+new keys across a rotation,
+// so waiting up to a minute to observe a genuinely new kid is harmless.
+const JWKS_REFETCH_COOLDOWN_MS = 60 * 1000;
 
 /** Test hook — clears the module-level JWKS cache. */
 export function _resetJwksCacheForTests(): void {
@@ -60,11 +66,15 @@ async function getKey(
   certsUrl: string,
   fetchJwks: (url: string) => Promise<{ keys: Jwk[] }>,
 ): Promise<Jwk | null> {
-  const fresh =
-    jwksCache !== null &&
-    jwksCache.url === certsUrl &&
-    Date.now() - jwksCache.fetchedAt < JWKS_TTL_MS;
-  if (!fresh || !jwksCache?.keys.has(kid)) {
+  const now = Date.now();
+  const sameUrl = jwksCache !== null && jwksCache.url === certsUrl;
+  const fresh = sameUrl && now - jwksCache!.fetchedAt < JWKS_TTL_MS;
+  const known = sameUrl && jwksCache!.keys.has(kid);
+  // Refetch when the cache is stale, or on a cache miss — but a miss only
+  // triggers a fetch once per cooldown so unknown-kid floods can't amplify.
+  const missCanRefetch =
+    !known && (!sameUrl || now - jwksCache!.fetchedAt >= JWKS_REFETCH_COOLDOWN_MS);
+  if (!fresh || missCanRefetch) {
     const { keys } = await fetchJwks(certsUrl);
     jwksCache = {
       url: certsUrl,
@@ -72,7 +82,7 @@ async function getKey(
       fetchedAt: Date.now(),
     };
   }
-  return jwksCache.keys.get(kid) ?? null;
+  return jwksCache?.keys.get(kid) ?? null;
 }
 
 function b64urlToBytes(b64url: string): Uint8Array {

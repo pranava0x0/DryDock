@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _resetJwksCacheForTests,
   normalizeTeamDomain,
@@ -75,6 +75,10 @@ beforeEach(async () => {
   publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("normalizeTeamDomain", () => {
   it("expands a bare team name and strips scheme/slashes", () => {
     expect(normalizeTeamDomain("myteam")).toBe("myteam.cloudflareaccess.com");
@@ -136,24 +140,31 @@ describe("verifyAccessJwt", () => {
     ).toBe(false);
   });
 
-  it("refetches the JWKS once for an unknown kid (key rotation)", async () => {
+  it("bounds unknown-kid refetches to one per cooldown, still picks up rotation", async () => {
     let fetches = 0;
     const rotatingFetch = async () => {
       fetches++;
       return fetchJwks();
     };
-    expect(await verify(await signJwt(goodPayload()), rotatingFetch)).toBe(
-      true,
-    );
+    const good = await signJwt(goodPayload());
+    const rotated = await signJwt(goodPayload(), { kid: "rotated" });
+
+    expect(await verify(good, rotatingFetch)).toBe(true);
     // Cached — same kid verifies without another fetch.
-    expect(await verify(await signJwt(goodPayload()), rotatingFetch)).toBe(
-      true,
-    );
+    expect(await verify(good, rotatingFetch)).toBe(true);
     expect(fetches).toBe(1);
-    // Unknown kid forces exactly one refetch, then fails (still absent).
-    expect(
-      await verify(await signJwt(goodPayload(), { kid: "rotated" }), rotatingFetch),
-    ).toBe(false);
+
+    // An unknown kid within the cooldown must NOT refetch — otherwise a flood
+    // of random-kid tokens amplifies into one origin→certs fetch each. It
+    // fails closed off the cached keys instead.
+    expect(await verify(rotated, rotatingFetch)).toBe(false);
+    expect(fetches).toBe(1);
+
+    // Once the cooldown elapses, a genuinely rotated kid triggers exactly one
+    // refetch — key rotation is still observed, just rate-limited.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.now() + 61_000));
+    expect(await verify(rotated, rotatingFetch)).toBe(false);
     expect(fetches).toBe(2);
   });
 });
