@@ -699,7 +699,11 @@ function runAndFinalize(params: RunAndFinalizeParams): Promise<void> {
         gate_status: gateStatus,
         gate_output: gateOutput,
         failure_reason: failureReason,
-        session_id: sessionId,
+        // Keep the thread resumable even when this turn died before Claude
+        // emitted a fresh session event: a follow-up that fails on a
+        // spawn/auth error would otherwise null out the still-valid parent
+        // session and force the next follow-up down the no-session fallback.
+        session_id: sessionId ?? resumeSessionId,
       });
       updateTask(task.id, { status: succeeded ? "done" : "failed" });
       // Synthesized terminator: the only `exit` event ever published for

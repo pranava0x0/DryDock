@@ -378,3 +378,27 @@ describe("runs lifecycle", () => {
     expect(getRun("nope")).toBeNull();
   });
 });
+
+describe("restart reconciliation", () => {
+  it("fails orphaned in-flight rows when the connection reopens", () => {
+    const project = createProject({ name: "P", path: "/tmp/p" });
+    const task = createTask({
+      project_id: project.id,
+      title: "interrupted",
+      description: "was mid-run when the process died",
+    });
+    updateTask(task.id, { status: "running" });
+    const run = createRun(task.id, "claude"); // defaults to status 'running'
+
+    // Simulate a restart: drop the in-memory connection, reopen the SAME file
+    // (DRYDOCK_DB_PATH is unchanged) so getDb() runs reconciliation.
+    _resetDbForTests();
+    getDb();
+
+    // Otherwise this dead row would count against the cap forever.
+    expect(getTask(task.id)?.status).toBe("failed");
+    const reopened = getRun(run.id);
+    expect(reopened?.status).toBe("failed");
+    expect(reopened?.failure_reason).toBe("interrupted");
+  });
+});

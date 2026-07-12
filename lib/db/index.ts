@@ -60,10 +60,43 @@ export function getDb(path?: string): DB {
   // columns (test_command, tokens_*, gate_*) won't appear. Bring the
   // schema forward with idempotent ALTER TABLE statements.
   migrate(db);
+  reconcileInterruptedRuns(db);
 
   cachedDb = db;
   cachedDbPath = target;
   return db;
+}
+
+/**
+ * Fail any run/task left mid-flight by a previous process.
+ *
+ * Orchestration state lives in memory (ACTIVE_RUNS controllers, the finalizer
+ * promises). A restart, crash, or dev-mode HMR reload discards all of it while
+ * the SQLite rows survive, so a task still marked `claimed`/`running` (and its
+ * `running` run) can never complete on its own. Left alone those dead rows keep
+ * counting against the concurrency cap forever — three of them under
+ * `max_concurrent_runs=3` wedges the queue, since no live run remains to finish
+ * and trigger a drain. This runs exactly once per process, at connection open
+ * (before any dispatch), so a fresh process reliably owns zero of them and it's
+ * always safe to fail every in-flight row it finds.
+ */
+function reconcileInterruptedRuns(db: DB): void {
+  db.prepare(
+    `UPDATE runs
+        SET status = 'failed',
+            failure_reason = COALESCE(failure_reason, 'interrupted'),
+            error = TRIM(COALESCE(error, '') || char(10)
+                         || '[drydock] interrupted by a server restart'),
+            completed_at = unixepoch()
+      WHERE status = 'running'`,
+  ).run();
+  db.prepare(
+    `UPDATE tasks
+        SET status = 'failed',
+            completed_at = unixepoch(),
+            updated_at = unixepoch()
+      WHERE status IN ('claimed', 'running')`,
+  ).run();
 }
 
 interface TableInfoRow {
