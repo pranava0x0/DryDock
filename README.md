@@ -65,6 +65,10 @@ Two project-specific Claude Code skills live in [`.claude/skills/`](.claude/skil
 - [x] Project discovery + per-project doc viewer
 - [x] Monthly budget rollup + threshold notifications
 - [x] Global backlog + bidirectional Apple Notes sync
+- [x] EP-1 — Front-door auth (Cloudflare Access / token, loopback bind), autonomy profiles, concurrency cap + queue, cancel
+- [x] EP-2 — Resumable task threads (session capture, follow-up turns via `claude --resume`, retry-with-feedback)
+
+The next epic (**EP-3 — close the git loop:** diff view → commit → push → PR/merge from the phone) and the full sequencing live in [docs/improvement-plan-2026-07.md](docs/improvement-plan-2026-07.md).
 
 Open items live in [drydock-backlog.md](drydock-backlog.md) and [issues.md](issues.md).
 

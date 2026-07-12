@@ -11,6 +11,10 @@ CREATE TABLE IF NOT EXISTS projects (
   -- Shell command to run inside the worktree after the agent exits 0.
   -- If null, the quality gate is skipped. Example: 'npm test'.
   test_command TEXT,
+  -- Agent blast radius for tasks in this project: 'readonly' (plan mode,
+  -- no writes), 'edits' (file edits + a narrow Bash allowlist), or 'full'
+  -- (file edits + unrestricted Bash). Never maps to a permission bypass.
+  autonomy     TEXT NOT NULL DEFAULT 'edits',
   created_at   INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
@@ -20,7 +24,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   title         TEXT NOT NULL,
   description   TEXT NOT NULL,
   provider      TEXT NOT NULL DEFAULT 'claude',
-  -- status lifecycle: pending -> claimed -> running -> done | failed
+  -- status lifecycle: pending -> claimed -> running -> done | failed.
+  -- 'queued' sits between pending and claimed when the concurrency cap is
+  -- full: pending -> queued -> claimed -> running -> ...
   status        TEXT NOT NULL DEFAULT 'pending',
   priority      INTEGER NOT NULL DEFAULT 0,
   branch        TEXT,
@@ -52,6 +58,17 @@ CREATE TABLE IF NOT EXISTS runs (
   -- Routing rule label that overrode the task's default provider/model at
   -- dispatch time. NULL when no rule matched (default routing was used).
   matched_rule  TEXT,
+  -- Why a failed run failed: 'cancelled' | 'gate_failed' | 'agent_exit'.
+  -- NULL for successful runs (and for failed rows written before this
+  -- column existed).
+  failure_reason TEXT,
+  -- Provider session/thread id (claude only) so a follow-up turn can
+  -- `--resume` the same conversation. NULL when the provider didn't report
+  -- one (e.g. gemini, or a run that errored before the init event).
+  session_id    TEXT,
+  -- The run this one continues (a follow-up turn). NULL for first runs.
+  -- Lets the UI render a task's runs as a thread.
+  parent_run_id TEXT,
   started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
   completed_at  INTEGER
 );

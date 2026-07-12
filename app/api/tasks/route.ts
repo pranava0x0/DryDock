@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { createTask, listTasks, TASK_STATUSES, type TaskStatus } from "@/lib/db/tasks";
 import { getProject } from "@/lib/db/projects";
-import { getLatestRunForTask } from "@/lib/db/runs";
+import { getLatestRunForTask, taskRunAggregate } from "@/lib/db/runs";
 import { isProviderName } from "@/lib/providers";
 import { badRequest, created, notFound, ok, serverError } from "@/lib/api/json";
 
@@ -28,6 +28,9 @@ export async function GET(request: NextRequest): Promise<Response> {
     const withRuns = tasks.map((task) => ({
       ...task,
       latest_run: getLatestRunForTask(task.id),
+      // Thread summary so the card can show "N turns" + total spend without
+      // fetching every run.
+      run_aggregate: taskRunAggregate(task.id),
     }));
     return ok({ tasks: withRuns });
   } catch (err) {

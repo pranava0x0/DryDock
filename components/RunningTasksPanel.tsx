@@ -11,7 +11,7 @@ interface RunningTask {
   project_name: string;
   title: string;
   provider: "claude" | "gemini";
-  status: "claimed" | "running";
+  status: "claimed" | "running" | "queued";
   branch: string | null;
   claimed_at: number | null;
   updated_at: number;
@@ -109,7 +109,12 @@ export function RunningTasksPanel() {
       </div>
       <ul className="divide-y divide-kraken-boundless/40">
         {tasks.map((task) => {
-          const elapsedFrom = task.latest_run?.started_at ?? task.claimed_at;
+          // A queued task hasn't started — a leftover run from an earlier
+          // attempt must not masquerade as live elapsed time.
+          const elapsedFrom =
+            task.status === "queued"
+              ? null
+              : (task.latest_run?.started_at ?? task.claimed_at);
           const elapsed = elapsedFrom
             ? formatElapsed(elapsedFrom, now)
             : null;

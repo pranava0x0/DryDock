@@ -60,10 +60,43 @@ export function getDb(path?: string): DB {
   // columns (test_command, tokens_*, gate_*) won't appear. Bring the
   // schema forward with idempotent ALTER TABLE statements.
   migrate(db);
+  reconcileInterruptedRuns(db);
 
   cachedDb = db;
   cachedDbPath = target;
   return db;
+}
+
+/**
+ * Fail any run/task left mid-flight by a previous process.
+ *
+ * Orchestration state lives in memory (ACTIVE_RUNS controllers, the finalizer
+ * promises). A restart, crash, or dev-mode HMR reload discards all of it while
+ * the SQLite rows survive, so a task still marked `claimed`/`running` (and its
+ * `running` run) can never complete on its own. Left alone those dead rows keep
+ * counting against the concurrency cap forever — three of them under
+ * `max_concurrent_runs=3` wedges the queue, since no live run remains to finish
+ * and trigger a drain. This runs exactly once per process, at connection open
+ * (before any dispatch), so a fresh process reliably owns zero of them and it's
+ * always safe to fail every in-flight row it finds.
+ */
+function reconcileInterruptedRuns(db: DB): void {
+  db.prepare(
+    `UPDATE runs
+        SET status = 'failed',
+            failure_reason = COALESCE(failure_reason, 'interrupted'),
+            error = TRIM(COALESCE(error, '') || char(10)
+                         || '[drydock] interrupted by a server restart'),
+            completed_at = unixepoch()
+      WHERE status = 'running'`,
+  ).run();
+  db.prepare(
+    `UPDATE tasks
+        SET status = 'failed',
+            completed_at = unixepoch(),
+            updated_at = unixepoch()
+      WHERE status IN ('claimed', 'running')`,
+  ).run();
 }
 
 interface TableInfoRow {
@@ -83,12 +116,16 @@ function migrate(db: DB): void {
   };
 
   ensure("projects", "test_command", "test_command TEXT");
+  ensure("projects", "autonomy", "autonomy TEXT NOT NULL DEFAULT 'edits'");
   ensure("runs", "tokens_in", "tokens_in INTEGER");
   ensure("runs", "tokens_out", "tokens_out INTEGER");
   ensure("runs", "cost_usd", "cost_usd REAL");
   ensure("runs", "gate_status", "gate_status TEXT");
   ensure("runs", "gate_output", "gate_output TEXT");
   ensure("runs", "matched_rule", "matched_rule TEXT");
+  ensure("runs", "failure_reason", "failure_reason TEXT");
+  ensure("runs", "session_id", "session_id TEXT");
+  ensure("runs", "parent_run_id", "parent_run_id TEXT");
 
   // settings + backlog_items: covered by the CREATE TABLE IF NOT EXISTS
   // statements in schema.sql for fresh DBs. For databases that existed

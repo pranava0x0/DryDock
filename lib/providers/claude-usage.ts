@@ -2,6 +2,7 @@ import { promises as fs, createReadStream } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
+import { mayContainRecentTurns, widestCutoff } from "./usage-mtime";
 
 /**
  * Claude Code session-log reader.
@@ -74,6 +75,10 @@ export async function readClaudeUsage(
   const monthlyCutoff = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
   );
+  // Files last written before this can't hold a turn in any window — skip
+  // them without reading. The monthly cutoff (1st of month) is normally the
+  // earliest; weekly is included in case a rollover makes it earlier.
+  const skipBefore = widestCutoff(monthlyCutoff, weeklyCutoff);
 
   const fiveHour = empty();
   const weekly = empty();
@@ -115,8 +120,10 @@ export async function readClaudeUsage(
 
     for (const f of files) {
       if (!f.endsWith(".jsonl")) continue;
-      filesScanned += 1;
       const filePath = join(subPath, f);
+      // Cheap stat gate before the expensive streaming read.
+      if (!(await mayContainRecentTurns(filePath, skipBefore))) continue;
+      filesScanned += 1;
       const sessionId = f.replace(/\.jsonl$/, "");
 
       await aggregateFile(filePath, sessionId, {

@@ -79,6 +79,24 @@ describe("parseClaudeLine", () => {
     expect(parseClaudeLine(line)).toEqual({ kind: "ignored" });
   });
 
+  it("captures the session id from the init system event", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "init",
+      session_id: "abc-123-session",
+      tools: ["Read", "Edit"],
+    });
+    expect(parseClaudeLine(line)).toEqual({
+      kind: "session",
+      sessionId: "abc-123-session",
+    });
+  });
+
+  it("a system event without a session id is still ignored", () => {
+    const line = JSON.stringify({ type: "system", subtype: "other" });
+    expect(parseClaudeLine(line)).toEqual({ kind: "ignored" });
+  });
+
   it("treats arrays / null as garbage", () => {
     expect(parseClaudeLine("[1,2,3]").kind).toBe("garbage");
     expect(parseClaudeLine("null").kind).toBe("garbage");

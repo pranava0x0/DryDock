@@ -6,11 +6,13 @@ import { use } from "react";
 import type { Project } from "@/lib/db/projects";
 import type { Task } from "@/lib/db/tasks";
 import type { Run } from "@/lib/db/runs";
+import type { AutonomyLevel } from "@/lib/providers/types";
 import { TaskCard } from "@/components/TaskCard";
 import { AddTaskModal } from "@/components/AddTaskModal";
 import { StreamViewer } from "@/components/StreamViewer";
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { ProjectDocs } from "@/components/ProjectDocs";
+import { AutonomySelect } from "@/components/AutonomySelect";
 
 // Next 15 wraps dynamic-route params in a Promise. `use()` unwraps it inside
 // a client component without forcing the whole page to be async.
@@ -21,9 +23,14 @@ export default function ProjectPage({
 }) {
   const { id } = use(params);
   const [project, setProject] = useState<Project | null>(null);
-  const [tasks, setTasks] = useState<Array<Task & { latest_run: Run | null }>>(
-    [],
-  );
+  const [tasks, setTasks] = useState<
+    Array<
+      Task & {
+        latest_run: Run | null;
+        run_aggregate?: { run_count: number; total_cost_usd: number | null };
+      }
+    >
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -59,6 +66,30 @@ export default function ProjectPage({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const [autonomySaving, setAutonomySaving] = useState(false);
+  const [autonomyError, setAutonomyError] = useState<string | null>(null);
+  const handleAutonomyChange = useCallback(
+    async (level: AutonomyLevel) => {
+      setAutonomySaving(true);
+      setAutonomyError(null);
+      try {
+        const res = await fetch(`/api/projects/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ autonomy: level }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Failed to save");
+        setProject(data.project);
+      } catch (err) {
+        setAutonomyError((err as Error).message);
+      } finally {
+        setAutonomySaving(false);
+      }
+    },
+    [id],
+  );
 
   // Poll for task updates while a stream is open so badges flip from
   // running → done/failed without the user having to refresh manually.
@@ -115,6 +146,19 @@ export default function ProjectPage({
         <ProviderBadge provider={project.provider} />
       </header>
 
+      <div className="mt-4 rounded-lg border border-kraken-boundless bg-kraken-deep/40 p-3">
+        <AutonomySelect
+          value={project.autonomy}
+          onChange={(level) => void handleAutonomyChange(level)}
+          disabled={autonomySaving}
+        />
+        {autonomyError ? (
+          <p className="mt-2 text-xs text-kraken-alert" role="alert">
+            {autonomyError}
+          </p>
+        ) : null}
+      </div>
+
       <section className="mt-6">
         <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-zinc-400">
           Tasks
@@ -134,6 +178,7 @@ export default function ProjectPage({
                 <TaskCard
                   task={task}
                   latestRun={task.latest_run}
+                  runAggregate={task.run_aggregate}
                   onRunStarted={() => {
                     setStreamTaskId(task.id);
                     setStreamKey((k) => k + 1);
@@ -175,6 +220,12 @@ export default function ProjectPage({
           taskId={streamTaskId}
           subscriptionKey={streamKey}
           onClose={() => setStreamTaskId(null)}
+          onFollowup={() => {
+            // A follow-up dispatched: re-subscribe to the new run and let
+            // the poll flip the badge back to running.
+            setStreamKey((k) => k + 1);
+            void refresh();
+          }}
         />
       ) : null}
     </>

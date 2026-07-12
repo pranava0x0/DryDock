@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import type { ProviderName } from "@/lib/providers";
+import type { AutonomyLevel } from "@/lib/providers/types";
+import { AutonomySelect } from "./AutonomySelect";
 
 export interface AddProjectModalProps {
   open: boolean;
@@ -18,6 +20,7 @@ export function AddProjectModal({
   const [path, setPath] = useState("");
   const [description, setDescription] = useState("");
   const [provider, setProvider] = useState<ProviderName>("claude");
+  const [autonomy, setAutonomy] = useState<AutonomyLevel>("edits");
   const [testCommand, setTestCommand] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +32,7 @@ export function AddProjectModal({
     setPath("");
     setDescription("");
     setProvider("claude");
+    setAutonomy("edits");
     setTestCommand("");
     setError(null);
     setBusy(false);
@@ -47,6 +51,7 @@ export function AddProjectModal({
           path: path.trim(),
           description: description.trim() || null,
           provider,
+          autonomy,
           test_command: testCommand.trim() || null,
         }),
       });
@@ -156,6 +161,7 @@ export function AddProjectModal({
               })}
             </div>
           </fieldset>
+          <AutonomySelect value={autonomy} onChange={setAutonomy} />
           {error ? (
             <p className="text-xs text-red-300" role="alert">
               {error}

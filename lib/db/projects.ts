@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { getDb } from "./index";
-import type { ProviderName } from "../providers/types";
+import type { AutonomyLevel, ProviderName } from "../providers/types";
 
 export interface Project {
   id: string;
@@ -10,6 +10,8 @@ export interface Project {
   provider: ProviderName;
   /** Shell command run after the agent exits 0; null = quality gate skipped. */
   test_command: string | null;
+  /** Agent permission profile for tasks in this project. */
+  autonomy: AutonomyLevel;
   created_at: number;
 }
 
@@ -19,6 +21,7 @@ export interface NewProjectInput {
   description?: string | null;
   provider?: ProviderName;
   test_command?: string | null;
+  autonomy?: AutonomyLevel;
 }
 
 export interface UpdateProjectInput {
@@ -27,13 +30,14 @@ export interface UpdateProjectInput {
   description?: string | null;
   provider?: ProviderName;
   test_command?: string | null;
+  autonomy?: AutonomyLevel;
 }
 
 export function listProjects(): Project[] {
   const db = getDb();
   return db
     .prepare(
-      `SELECT id, name, path, description, provider, test_command, created_at
+      `SELECT id, name, path, description, provider, test_command, autonomy, created_at
        FROM projects ORDER BY created_at DESC`,
     )
     .all() as Project[];
@@ -43,7 +47,7 @@ export function getProject(id: string): Project | null {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, name, path, description, provider, test_command, created_at
+      `SELECT id, name, path, description, provider, test_command, autonomy, created_at
        FROM projects WHERE id = ?`,
     )
     .get(id) as Project | undefined;
@@ -55,8 +59,8 @@ export function createProject(input: NewProjectInput): Project {
   const id = nanoid();
   const provider = input.provider ?? "claude";
   db.prepare(
-    `INSERT INTO projects (id, name, path, description, provider, test_command)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO projects (id, name, path, description, provider, test_command, autonomy)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     input.name,
@@ -64,6 +68,7 @@ export function createProject(input: NewProjectInput): Project {
     input.description ?? null,
     provider,
     input.test_command ?? null,
+    input.autonomy ?? "edits",
   );
   const created = getProject(id);
   if (!created) {
@@ -103,6 +108,10 @@ export function updateProject(
   if (patch.test_command !== undefined) {
     fields.push("test_command = ?");
     values.push(patch.test_command);
+  }
+  if (patch.autonomy !== undefined) {
+    fields.push("autonomy = ?");
+    values.push(patch.autonomy);
   }
 
   if (fields.length === 0) return existing;

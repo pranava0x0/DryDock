@@ -11,6 +11,29 @@ export function isProviderName(value: unknown): value is ProviderName {
 }
 
 /**
+ * How much blast radius an agent gets, set per project. Maps to explicit
+ * CLI permission flags — the host's own `~/.claude/settings.json` should
+ * never be the thing deciding what a dispatched agent may do.
+ *
+ * - `readonly`: plan/analysis only, no writes.
+ * - `edits`: file edits plus a narrow Bash allowlist (tests, typecheck,
+ *   read-only git). The default.
+ * - `full`: file edits plus unrestricted Bash. Still never a permission
+ *   bypass — `--dangerously-skip-permissions` is banned on the host.
+ */
+export type AutonomyLevel = "readonly" | "edits" | "full";
+
+export const AUTONOMY_LEVELS: readonly AutonomyLevel[] = [
+  "readonly",
+  "edits",
+  "full",
+] as const;
+
+export function isAutonomyLevel(value: unknown): value is AutonomyLevel {
+  return value === "readonly" || value === "edits" || value === "full";
+}
+
+/**
  * An event emitted by a running agent. Providers stream these as the
  * subprocess produces output; the orchestrator forwards them to the SSE
  * client and aggregates them into the final `runs.output` row.
@@ -29,7 +52,14 @@ export type AgentEvent =
       tokensIn: number | null;
       tokensOut: number | null;
       costUsd: number | null;
-    };
+    }
+  /**
+   * The provider's session/thread id, emitted once when first seen (claude
+   * only, currently). The dispatcher persists it to `runs.session_id` so a
+   * follow-up turn can resume the same conversation. Does not terminate the
+   * stream; not forwarded to SSE viewers (it's internal plumbing).
+   */
+  | { type: "session"; sessionId: string };
 
 export interface AgentRunOptions {
   /** Absolute path to the directory the subprocess should run inside. */
@@ -46,6 +76,18 @@ export interface AgentRunOptions {
    * (passed as `--model <model>`). Null / undefined = provider default.
    */
   model?: string | null;
+  /**
+   * Permission profile for the subprocess. Only honoured by the claude
+   * provider today (mapped to `--permission-mode` / `--allowedTools`).
+   * Undefined = 'edits'.
+   */
+  autonomy?: AutonomyLevel;
+  /**
+   * Resume an existing session/thread instead of starting fresh (claude
+   * `--resume <id>`). Set for follow-up turns. Null / undefined = new
+   * session. Only the claude provider honours it today.
+   */
+  resumeSessionId?: string | null;
 }
 
 /**

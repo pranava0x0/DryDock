@@ -2,6 +2,7 @@ import { promises as fs, createReadStream } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
+import { mayContainRecentTurns, widestCutoff } from "./usage-mtime";
 
 /**
  * OpenAI Codex CLI session-log reader.
@@ -86,6 +87,9 @@ export async function readCodexUsage(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
   );
 
+  // Skip rollout files last written before every window (see usage-mtime).
+  const skipBefore = widestCutoff(monthlyCutoff, weeklyCutoff);
+
   const weekly = empty();
   const monthly = empty();
   const weeklySessions = new Set<string>();
@@ -104,6 +108,7 @@ export async function readCodexUsage(
   }
 
   for (const filePath of files) {
+    if (!(await mayContainRecentTurns(filePath, skipBefore))) continue;
     filesScanned += 1;
     // One session per rollout file — use the path as a stable session key.
     await aggregateFile(filePath, filePath, {
