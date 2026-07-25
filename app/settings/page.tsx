@@ -50,12 +50,22 @@ interface GeminiActivityWindow {
   conversations: number;
 }
 
+/** The `agy` CLI's separate SQLite store (DD-BL-38). */
+interface AntigravityCliReport {
+  health: "ok" | "no-data" | "unavailable";
+  reason: string | null;
+  databases: number;
+  events: number;
+  conversations: number;
+}
+
 interface GeminiUsageReport {
   weekly: GeminiActivityWindow;
   monthly: GeminiActivityWindow;
   latestActivityAt: string | null;
   conversationsScanned: number;
   generatedAt: string;
+  cli: AntigravityCliReport;
 }
 
 interface CodexUsageWindow {
@@ -261,6 +271,18 @@ function GoogleBudgetCard({
             Activity, not tokens — Google records no token counts locally.
           </p>
         </>
+      ) : null}
+      {/* The `agy` CLI keeps its own SQLite store, separate from the IDE
+          logs above. Only mentioned when it has something to say: an
+          "unavailable" chip on a machine that has never run the CLI would
+          be noise, but a CLI that IS installed and unreadable is exactly
+          the case the counts above would silently under-report. */}
+      {report?.cli && report.cli.databases > 0 ? (
+        <p className="mt-2 text-[11px] leading-snug text-kraken-shadow">
+          {report.cli.health === "ok"
+            ? `+ agy CLI: ${report.cli.events} step${report.cli.events === 1 ? "" : "s"} this week across ${report.cli.conversations} conversation${report.cli.conversations === 1 ? "" : "s"} (not included above).`
+            : `⚠ agy CLI store found but unreadable — ${report.cli.reason ?? "unknown reason"}. The counts above exclude it.`}
+        </p>
       ) : null}
     </>
   );

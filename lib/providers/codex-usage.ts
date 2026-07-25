@@ -1,5 +1,5 @@
 import { promises as fs, createReadStream } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { mayContainRecentTurns, widestCutoff } from "./usage-mtime";
@@ -35,6 +35,14 @@ import { mayContainRecentTurns, widestCutoff } from "./usage-mtime";
  * also accepts an unwrapped `{type:"token_count",info:{…}}` and degrades to
  * zeros rather than throwing when `~/.codex/sessions` is absent (UI shows
  * "no data yet").
+ *
+ * ── ARCHIVED SESSIONS (DD-BL-38) ────────────────────────────────────────
+ * Codex's `/archive` command MOVES a rollout out of `sessions/YYYY/MM/DD/`
+ * into a flat `~/.codex/archived_sessions/`. Reading only `sessions/` made
+ * archived work silently vanish from the totals — the same bug ccusage hit
+ * (PR #849). We now read both roots. `archivedDirFor` derives the archive
+ * as a *sibling of the sessions root* so fixtures get the same treatment
+ * as production without a second parameter to thread through.
  *
  * Privacy: we only read numeric token fields and the line timestamp.
  * Prompt / response content is never read or returned.
@@ -98,20 +106,20 @@ export async function readCodexUsage(
   let latestTurnAt: string | null = null;
   let filesScanned = 0;
 
-  let files: string[];
-  try {
-    files = await collectJsonlFiles(rootDir);
-  } catch {
+  const files = await collectRolloutFiles(rootDir);
+  if (files.length === 0) {
     // No ~/.codex/sessions yet (Codex CLI never run here). Return zeros —
     // UI surfaces "no data yet" cleanly.
     return finalize(weekly, monthly, latestTurnAt, filesScanned);
   }
 
-  for (const filePath of files) {
+  for (const { path: filePath, sessionKey } of files) {
     if (!(await mayContainRecentTurns(filePath, skipBefore))) continue;
     filesScanned += 1;
-    // One session per rollout file — use the path as a stable session key.
-    await aggregateFile(filePath, filePath, {
+    // One session per rollout file, keyed by rollout identity (not the
+    // absolute path) so archiving a session mid-window doesn't make it
+    // count as two.
+    await aggregateFile(filePath, sessionKey, {
       weeklyCutoff,
       monthlyCutoff,
       weekly,
@@ -131,10 +139,76 @@ export async function readCodexUsage(
 }
 
 /**
+ * The archive root for a given sessions root — its sibling
+ * `archived_sessions/`. Exported for the connector and the tests; keeping
+ * it derived (rather than a second argument) means a fixture directory
+ * laid out like `~/.codex` exercises both roots for free.
+ */
+export function archivedDirFor(sessionsRoot: string): string {
+  return join(dirname(sessionsRoot), "archived_sessions");
+}
+
+/** A rollout file plus the identity we count sessions by. */
+export interface RolloutFile {
+  path: string;
+  /**
+   * Stable identity for the rollout. The session UUID from the filename
+   * when it parses (`rollout-<ISO>-<uuid>.jsonl`), else the path relative
+   * to its own root.
+   *
+   * Why not the absolute path: `sessions/2026/07/25/rollout-…-<uuid>.jsonl`
+   * and `archived_sessions/rollout-…-<uuid>.jsonl` are the *same* session
+   * before and after `/archive`, and the archive is flat — so the relative
+   * paths differ too and can't pair them (the plan assumed the archive
+   * mirrored the date tree; on disk it doesn't). The embedded UUID is the
+   * only thing that survives the move. Anything that doesn't match the
+   * rollout pattern falls back to the relative path rather than the bare
+   * basename, so two genuinely-different files can never collapse into one.
+   */
+  sessionKey: string;
+}
+
+const ROLLOUT_UUID =
+  /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+
+function sessionKeyFor(rootDir: string, filePath: string): string {
+  const match = basename(filePath).match(ROLLOUT_UUID);
+  if (match) return match[1].toLowerCase();
+  return relative(rootDir, filePath);
+}
+
+/**
+ * Every rollout file across the live sessions root and its archive,
+ * deduped by session identity. The live copy wins when both exist (it is
+ * the one still being appended to). Returns an empty array — rather than
+ * throwing — when neither root is readable; "Codex was never run here" is
+ * an expected state, not an error.
+ */
+async function collectRolloutFiles(rootDir: string): Promise<RolloutFile[]> {
+  const byKey = new Map<string, RolloutFile>();
+  // Order matters: the live root is walked first so its entry wins the
+  // `has` check below if a rollout somehow exists in both places.
+  for (const root of [rootDir, archivedDirFor(rootDir)]) {
+    let paths: string[];
+    try {
+      paths = await collectJsonlFiles(root);
+    } catch {
+      continue;
+    }
+    for (const path of paths) {
+      const sessionKey = sessionKeyFor(root, path);
+      if (!byKey.has(sessionKey)) byKey.set(sessionKey, { path, sessionKey });
+    }
+  }
+  return [...byKey.values()];
+}
+
+/**
  * Recursively gather every `.jsonl` file under `rootDir`. Codex nests
- * rollouts under `YYYY/MM/DD/`, but flat layouts (older versions) work too
- * since we just walk whatever directory tree is there. Throws if `rootDir`
- * itself can't be read, so the caller can treat that as the empty case.
+ * rollouts under `YYYY/MM/DD/`, but flat layouts (the archive, and older
+ * versions) work too since we just walk whatever directory tree is there.
+ * Throws if `rootDir` itself can't be read, so the caller can treat that
+ * as the empty case.
  */
 async function collectJsonlFiles(rootDir: string): Promise<string[]> {
   const out: string[] = [];

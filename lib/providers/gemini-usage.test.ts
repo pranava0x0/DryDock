@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
 import { readGeminiUsage } from "./gemini-usage";
 
 /**
@@ -23,6 +24,13 @@ afterEach(() => {
 });
 
 const FIXED_NOW = new Date("2026-05-16T12:00:00.000Z");
+
+/**
+ * A CLI-store path that deliberately doesn't exist. Passed explicitly by
+ * every test so none of them fall through to the real
+ * `~/.gemini/antigravity-cli` and read the developer's own conversations.
+ */
+const noCliDir = (): string => join(root, "no-agy-cli");
 
 interface StepFixture {
   created_at: string; // ISO
@@ -59,7 +67,7 @@ function writeConversation(
 
 describe("readGeminiUsage", () => {
   it("returns zeros for a missing root dir (Antigravity never run)", async () => {
-    const report = await readGeminiUsage(join(root, "does-not-exist"), FIXED_NOW);
+    const report = await readGeminiUsage(join(root, "does-not-exist"), FIXED_NOW, noCliDir());
     expect(report.weekly.modelTurns).toBe(0);
     expect(report.weekly.conversations).toBe(0);
     expect(report.monthly.userPrompts).toBe(0);
@@ -78,7 +86,7 @@ describe("readGeminiUsage", () => {
       { created_at: "2026-05-15T11:00:06Z", type: "PLANNER_RESPONSE" },
     ]);
 
-    const report = await readGeminiUsage(root, FIXED_NOW);
+    const report = await readGeminiUsage(root, FIXED_NOW, noCliDir());
     expect(report.weekly.userPrompts).toBe(2);
     expect(report.weekly.modelTurns).toBe(3);
     expect(report.weekly.toolCalls).toBe(4);
@@ -96,7 +104,7 @@ describe("readGeminiUsage", () => {
       { created_at: "2026-05-14T12:00:00Z", type: "PLANNER_RESPONSE", toolCalls: 1 },
     ]);
 
-    const report = await readGeminiUsage(root, FIXED_NOW);
+    const report = await readGeminiUsage(root, FIXED_NOW, noCliDir());
     expect(report.weekly.modelTurns).toBe(1);
     expect(report.weekly.toolCalls).toBe(1);
     expect(report.weekly.conversations).toBe(1);
@@ -113,7 +121,7 @@ describe("readGeminiUsage", () => {
       { created_at: "2026-05-01T00:01:00Z", type: "PLANNER_RESPONSE" },
     ]);
 
-    const report = await readGeminiUsage(root, FIXED_NOW);
+    const report = await readGeminiUsage(root, FIXED_NOW, noCliDir());
     expect(report.monthly.modelTurns).toBe(1);
     expect(report.monthly.conversations).toBe(1);
   });
@@ -126,7 +134,7 @@ describe("readGeminiUsage", () => {
       { created_at: "2026-05-16T08:00:00Z", type: "PLANNER_RESPONSE" },
       { created_at: "2026-05-15T08:00:00Z", type: "PLANNER_RESPONSE" },
     ]);
-    const report = await readGeminiUsage(root, FIXED_NOW);
+    const report = await readGeminiUsage(root, FIXED_NOW, noCliDir());
     expect(report.latestActivityAt).toBe("2026-05-16T08:00:00Z");
   });
 
@@ -136,7 +144,7 @@ describe("readGeminiUsage", () => {
       [{ created_at: "2026-05-15T10:00:00Z", type: "USER_INPUT", source: "USER_EXPLICIT" }],
       "overview.txt",
     );
-    const report = await readGeminiUsage(root, FIXED_NOW);
+    const report = await readGeminiUsage(root, FIXED_NOW, noCliDir());
     expect(report.weekly.userPrompts).toBe(1);
     expect(report.conversationsScanned).toBe(1);
   });
@@ -148,7 +156,7 @@ describe("readGeminiUsage", () => {
     writeConversation("real", [
       { created_at: "2026-05-15T10:00:00Z", type: "PLANNER_RESPONSE" },
     ]);
-    const report = await readGeminiUsage(root, FIXED_NOW);
+    const report = await readGeminiUsage(root, FIXED_NOW, noCliDir());
     expect(report.conversationsScanned).toBe(1);
     expect(report.weekly.modelTurns).toBe(1);
   });
@@ -171,7 +179,7 @@ describe("readGeminiUsage", () => {
       ].join("\n") + "\n",
     );
 
-    const report = await readGeminiUsage(root, FIXED_NOW);
+    const report = await readGeminiUsage(root, FIXED_NOW, noCliDir());
     expect(report.weekly.modelTurns).toBe(1);
     expect(report.weekly.toolCalls).toBe(2);
   });
@@ -182,10 +190,56 @@ describe("readGeminiUsage", () => {
       { created_at: "2026-05-14T12:00:00Z", type: "PLANNER_RESPONSE" }, // inside weekly
       { created_at: "2026-05-15T12:00:00Z", type: "PLANNER_RESPONSE" }, // inside weekly
     ]);
-    const report = await readGeminiUsage(root, FIXED_NOW);
+    const report = await readGeminiUsage(root, FIXED_NOW, noCliDir());
     expect(report.weekly.conversations).toBe(1);
     expect(report.monthly.conversations).toBe(1);
     expect(report.weekly.modelTurns).toBe(2);
     expect(report.monthly.modelTurns).toBe(3);
+  });
+});
+
+describe("readGeminiUsage — agy CLI store (DD-BL-38)", () => {
+  it("reports the CLI store alongside the IDE windows, never merged", async () => {
+    // The IDE brain logs and the CLI's SQLite store are different
+    // sources with different confidence. Merging them would hide an
+    // unreadable CLI behind healthy IDE numbers.
+    writeConversation("conv-1", [
+      { created_at: "2026-05-15T10:00:00.000Z", type: "USER_INPUT" },
+    ]);
+    const cliDir = join(root, "agy-cli");
+    mkdirSync(cliDir, { recursive: true });
+    const db = new Database(join(cliDir, "c.db"));
+    db.prepare(`CREATE TABLE steps (created_at TEXT)`).run();
+    db.prepare(`INSERT INTO steps VALUES ('2026-05-15T12:00:00Z')`).run();
+    db.close();
+
+    const report = await readGeminiUsage(root, FIXED_NOW, cliDir);
+    expect(report.weekly.userPrompts).toBe(1);
+    expect(report.cli.health).toBe("ok");
+    expect(report.cli.events).toBe(1);
+  });
+
+  it("still reports the CLI store when the IDE brain dir is missing", async () => {
+    // A CLI-only user previously read as zero activity across the board.
+    const cliDir = join(root, "agy-cli");
+    mkdirSync(cliDir, { recursive: true });
+    const db = new Database(join(cliDir, "c.db"));
+    db.prepare(`CREATE TABLE steps (created_at TEXT)`).run();
+    db.prepare(`INSERT INTO steps VALUES ('2026-05-15T12:00:00Z')`).run();
+    db.close();
+
+    const report = await readGeminiUsage(
+      join(root, "does-not-exist"),
+      FIXED_NOW,
+      cliDir,
+    );
+    expect(report.weekly.userPrompts).toBe(0);
+    expect(report.cli.events).toBe(1);
+  });
+
+  it("marks the CLI store unavailable when it isn't installed", async () => {
+    const report = await readGeminiUsage(root, FIXED_NOW, noCliDir());
+    expect(report.cli.health).toBe("unavailable");
+    expect(report.cli.events).toBe(0);
   });
 });
