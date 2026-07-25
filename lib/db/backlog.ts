@@ -1,15 +1,51 @@
 import { nanoid } from "nanoid";
 import { getDb } from "./index";
 
-export type BacklogStatus = "idea" | "in_progress" | "done" | "dropped";
-export type BacklogSource = "manual" | "apple-notes";
+export type BacklogStatus =
+  | "idea"
+  | "in_progress"
+  | "done"
+  | "dropped"
+  /**
+   * Machine-generated and not yet accepted by a human (EP-14). Lives in
+   * the inbox with a 🤖 chip. Distinct from `idea` so the nightly idea
+   * generator can never quietly grow the trusted backlog.
+   */
+  | "proposed";
+
+export type BacklogSource =
+  | "manual"
+  | "apple-notes"
+  | "shortcut"
+  | "imessage"
+  | "ai-generated"
+  | "github"
+  | "project-file";
 
 export const BACKLOG_STATUSES: readonly BacklogStatus[] = [
   "idea",
   "in_progress",
   "done",
   "dropped",
+  "proposed",
 ] as const;
+
+export const BACKLOG_SOURCES: readonly BacklogSource[] = [
+  "manual",
+  "apple-notes",
+  "shortcut",
+  "imessage",
+  "ai-generated",
+  "github",
+  "project-file",
+] as const;
+
+export function isBacklogSource(value: unknown): value is BacklogSource {
+  return (
+    typeof value === "string" &&
+    (BACKLOG_SOURCES as readonly string[]).includes(value)
+  );
+}
 
 export interface BacklogItem {
   id: string;
@@ -24,6 +60,16 @@ export interface BacklogItem {
   external_id: string | null;
   /** Task id created when the item is burned down. */
   task_id: string | null;
+  /**
+   * When a human accepted this into the trusted backlog. NULL = inbox.
+   * Notes-sourced rows are pre-triaged: typing into the Apple Note is
+   * already a deliberate act on a trusted surface.
+   */
+  triaged_at: number | null;
+  /** The capture text exactly as it arrived. Parsing is never destructive. */
+  raw_capture: string | null;
+  /** "owner/repo#42" once mirrored to the GitHub tracker (EP-13). */
+  github_issue_ref: string | null;
   created_at: number;
   updated_at: number;
   completed_at: number | null;
@@ -37,6 +83,9 @@ export interface NewBacklogInput {
   priority?: number;
   source?: BacklogSource;
   external_id?: string | null;
+  triaged_at?: number | null;
+  raw_capture?: string | null;
+  github_issue_ref?: string | null;
   /**
    * Optional Unix-seconds creation timestamp. Used by the Apple Notes
    * sync to preserve `· added YYYY-MM-DD` history when rebuilding a
@@ -60,15 +109,25 @@ export interface UpdateBacklogInput {
    */
   external_id?: string | null;
   source?: BacklogSource;
+  triaged_at?: number | null;
+  github_issue_ref?: string | null;
 }
 
 export interface ListBacklogFilter {
   status?: BacklogStatus;
   projectId?: string | "unassigned";
+  /**
+   * "inbox" = untriaged only; "triaged" = the trusted backlog only.
+   * Omit for everything. The default across the app is deliberately
+   * *not* "everything" — the point of the inbox is that raw captures
+   * don't pollute the list you trust.
+   */
+  stage?: "inbox" | "triaged";
 }
 
 const SELECT_COLUMNS = `id, title, description, project_id, status, priority,
-  source, external_id, task_id, created_at, updated_at, completed_at`;
+  source, external_id, task_id, triaged_at, raw_capture, github_issue_ref,
+  created_at, updated_at, completed_at`;
 
 export function listBacklog(
   filter: ListBacklogFilter = {},
@@ -85,6 +144,11 @@ export function listBacklog(
   } else if (filter.projectId) {
     where.push("project_id = ?");
     params.push(filter.projectId);
+  }
+  if (filter.stage === "inbox") {
+    where.push("triaged_at IS NULL");
+  } else if (filter.stage === "triaged") {
+    where.push("triaged_at IS NOT NULL");
   }
   const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   return db
@@ -153,8 +217,10 @@ export function createBacklogItem(input: NewBacklogInput): BacklogItem {
   if (typeof input.created_at === "number" && Number.isFinite(input.created_at)) {
     db.prepare(
       `INSERT INTO backlog_items
-         (id, title, description, project_id, status, priority, source, external_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, title, description, project_id, status, priority, source,
+          external_id, triaged_at, raw_capture, github_issue_ref,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       input.title,
@@ -164,14 +230,18 @@ export function createBacklogItem(input: NewBacklogInput): BacklogItem {
       input.priority ?? 0,
       input.source ?? "manual",
       input.external_id ?? null,
+      defaultTriagedAt(input),
+      input.raw_capture ?? null,
+      input.github_issue_ref ?? null,
       input.created_at,
       input.created_at,
     );
   } else {
     db.prepare(
       `INSERT INTO backlog_items
-         (id, title, description, project_id, status, priority, source, external_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, title, description, project_id, status, priority, source,
+          external_id, triaged_at, raw_capture, github_issue_ref)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       input.title,
@@ -181,6 +251,9 @@ export function createBacklogItem(input: NewBacklogInput): BacklogItem {
       input.priority ?? 0,
       input.source ?? "manual",
       input.external_id ?? null,
+      defaultTriagedAt(input),
+      input.raw_capture ?? null,
+      input.github_issue_ref ?? null,
     );
   }
   const created = getBacklogItem(id);
@@ -234,6 +307,14 @@ export function updateBacklogItem(
     fields.push("source = ?");
     values.push(patch.source);
   }
+  if (patch.triaged_at !== undefined) {
+    fields.push("triaged_at = ?");
+    values.push(patch.triaged_at);
+  }
+  if (patch.github_issue_ref !== undefined) {
+    fields.push("github_issue_ref = ?");
+    values.push(patch.github_issue_ref);
+  }
 
   if (fields.length === 0) return existing;
 
@@ -247,6 +328,55 @@ export function updateBacklogItem(
     `UPDATE backlog_items SET ${fields.join(", ")} WHERE id = ?`,
   ).run(...values);
   return getBacklogItem(id);
+}
+
+/**
+ * Which sources land pre-triaged.
+ *
+ * The inbox exists to keep *raw captures* out of the trusted list, not to
+ * add a step to deliberate entries. Typing into the DryDock UI or into
+ * the Apple Note is already a considered act on a trusted surface, so
+ * those bypass it — and that keeps the Apple Notes sync's behaviour
+ * bit-for-bit unchanged, which its tests depend on. Everything that
+ * arrives from a five-second channel or a machine goes to the inbox.
+ */
+const PRE_TRIAGED_SOURCES: readonly BacklogSource[] = [
+  "manual",
+  "apple-notes",
+];
+
+function defaultTriagedAt(input: NewBacklogInput): number | null {
+  if (input.triaged_at !== undefined) return input.triaged_at;
+  const source = input.source ?? "manual";
+  return PRE_TRIAGED_SOURCES.includes(source)
+    ? (input.created_at ?? Math.floor(Date.now() / 1000))
+    : null;
+}
+
+/** Accept an inbox item into the trusted backlog. */
+export function triageBacklogItem(
+  id: string,
+  at: number = Math.floor(Date.now() / 1000),
+): BacklogItem | null {
+  const existing = getBacklogItem(id);
+  if (!existing) return null;
+  return updateBacklogItem(id, {
+    triaged_at: at,
+    // A machine proposal becomes a real idea the moment a human accepts
+    // it. Leaving it `proposed` would keep it filtered out of the list
+    // it was just promoted into.
+    ...(existing.status === "proposed" ? { status: "idea" as const } : {}),
+  });
+}
+
+/** Count of untriaged rows — the Inbox (n) badge. */
+export function inboxCount(): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM backlog_items WHERE triaged_at IS NULL`,
+    )
+    .get() as { n: number } | undefined;
+  return row?.n ?? 0;
 }
 
 export function deleteBacklogItem(id: string): boolean {

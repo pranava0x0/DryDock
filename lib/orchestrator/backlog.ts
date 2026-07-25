@@ -155,6 +155,33 @@ export function burnDownBacklogItem(
   return { taskId: task.id, backlogId: item.id };
 }
 
+/**
+ * What gets written to the Apple Note.
+ *
+ * Two exclusions, both deliberate:
+ *   - **dropped** — ideas the user actively dismissed. (Existing rule.)
+ *   - **untriaged** — everything sitting in the inbox, including every
+ *     `proposed` row from the nightly idea generator. The Note is the
+ *     user's trusted list; a capture channel or a machine must not be
+ *     able to write into it. This is also what keeps the Apple Notes
+ *     sync's behaviour bit-for-bit unchanged for existing data, since
+ *     the migration stamps every pre-existing row as triaged.
+ */
+function renderableForNote(): Array<{
+  title: string;
+  status: "idea" | "in_progress" | "done" | "dropped";
+  createdAt: number;
+}> {
+  return listBacklog({ stage: "triaged" })
+    .filter((i) => i.status !== "dropped" && i.status !== "proposed")
+    .map((i) => ({
+      title: i.title,
+      // Narrowed by the filter above; `proposed` never reaches the note.
+      status: i.status as "idea" | "in_progress" | "done" | "dropped",
+      createdAt: i.created_at,
+    }));
+}
+
 export interface SyncStats {
   notesTitle: string;
   pulledNew: number;
@@ -355,14 +382,7 @@ async function runSyncOnce(): Promise<SyncStats> {
   // include "done" items (with a checkmark) so the user has visibility
   // into recently-completed work in the note. "dropped" items are
   // excluded — they represent ideas the user actively dismissed.
-  const items = listBacklog();
-  const renderable = items
-    .filter((i) => i.status !== "dropped")
-    .map((i) => ({
-      title: i.title,
-      status: i.status,
-      createdAt: i.created_at,
-    }));
+  const renderable = renderableForNote();
   const writtenId = await writeAppleNote(
     title,
     renderAppleNoteBody(renderable, title),
@@ -401,14 +421,7 @@ export async function pushToAppleNotesSilently(): Promise<{ ok: boolean; error?:
   try {
     const title = getNotesTitle();
     const storedNoteId = getNotesNoteId();
-    const items = listBacklog();
-    const renderable = items
-      .filter((i) => i.status !== "dropped")
-      .map((i) => ({
-        title: i.title,
-        status: i.status,
-        createdAt: i.created_at,
-      }));
+    const renderable = renderableForNote();
     const writtenId = await writeAppleNote(
       title,
       renderAppleNoteBody(renderable, title),
@@ -435,9 +448,12 @@ export async function pushToAppleNotesSilently(): Promise<{ ok: boolean; error?:
  * highest score so a "done" copy doesn't get resurrected as "idea".
  */
 const STATUS_RANK: Record<BacklogStatus, number> = {
-  done: 3,
-  in_progress: 2,
-  idea: 1,
+  done: 4,
+  in_progress: 3,
+  idea: 2,
+  // Below `idea`: a machine proposal must never win a merge against a
+  // row a human already accepted.
+  proposed: 1,
   dropped: 0,
 };
 

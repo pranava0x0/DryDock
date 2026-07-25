@@ -92,12 +92,29 @@ CREATE TABLE IF NOT EXISTS backlog_items (
   -- status lifecycle: idea -> in_progress -> done | dropped
   status       TEXT NOT NULL DEFAULT 'idea',
   priority     INTEGER NOT NULL DEFAULT 0,
-  -- Where the item came from: 'manual' (created via DryDock UI) or
-  -- 'apple-notes' (pulled from the synced Apple Note).
+  -- Where the item came from. 'manual' (DryDock UI) | 'apple-notes' |
+  -- 'shortcut' (Siri/Shortcuts) | 'imessage' | 'ai-generated' (the
+  -- nightly idea generator) | 'github' (an issue opened directly) |
+  -- 'project-file' (a project's own backlog.md). No CHECK constraint —
+  -- the union is enforced in the application layer.
   source       TEXT NOT NULL DEFAULT 'manual',
-  -- When source='apple-notes', this is the stable line key the Apple Notes
-  -- sync uses to dedup. Null for manual items.
+  -- Stable dedup key for whatever produced this row. Namespaced by
+  -- source so two feeders can't collide: Apple Notes uses a bare line
+  -- key (historical, unprefixed), project files use
+  -- 'projfile:<projectId>:<lineKey>', ideas use 'idea:<filename>'.
   external_id  TEXT,
+  -- When the user deliberately accepted this item into the trusted
+  -- backlog. NULL = it's sitting in the inbox. Existing rows are stamped
+  -- with created_at by the migration: everything already in the list was
+  -- implicitly triaged, so current data behaves exactly as before.
+  triaged_at   INTEGER,
+  -- The capture text exactly as it arrived, before parsing. Parsing is
+  -- best-effort and must never be destructive — if the marker parser
+  -- gets something wrong, the original is still here.
+  raw_capture  TEXT,
+  -- "owner/repo#42" once mirrored to the GitHub tracker (EP-13). The
+  -- apple_notes_note_id pattern, per row.
+  github_issue_ref TEXT,
   -- Task id created when the user burns the item down. Lets the UI link
   -- back to the actual orchestrator task that's now executing the work.
   task_id      TEXT REFERENCES tasks(id) ON DELETE SET NULL,

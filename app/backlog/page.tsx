@@ -4,8 +4,17 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { SyncStatus } from "@/components/SyncStatus";
 import { useAutoSync } from "@/components/useAutoSync";
+import { InboxPanel } from "@/components/InboxPanel";
+import { GithubWorkPanel } from "@/components/GithubWorkPanel";
+import { QuickAdd } from "@/components/QuickAdd";
+import { InlineDisclosure } from "@/components/Disclosure";
 
-type BacklogStatus = "idea" | "in_progress" | "done" | "dropped";
+type BacklogStatus =
+  | "idea"
+  | "in_progress"
+  | "done"
+  | "dropped"
+  | "proposed";
 
 interface BacklogItem {
   id: string;
@@ -14,9 +23,12 @@ interface BacklogItem {
   project_id: string | null;
   status: BacklogStatus;
   priority: number;
-  source: "manual" | "apple-notes";
+  source: string;
   external_id: string | null;
   task_id: string | null;
+  triaged_at: number | null;
+  raw_capture: string | null;
+  github_issue_ref: string | null;
   created_at: number;
   updated_at: number;
   completed_at: number | null;
@@ -33,6 +45,7 @@ const STATUS_LABELS: Record<BacklogStatus, string> = {
   in_progress: "In progress",
   done: "Done",
   dropped: "Dropped",
+  proposed: "Proposed",
 };
 
 const STATUS_FILTERS: Array<BacklogStatus | "all"> = [
@@ -74,8 +87,8 @@ export default function BacklogPage() {
       const [itemsRes, projectsRes] = await Promise.all([
         fetch(
           filter === "all"
-            ? "/api/backlog"
-            : `/api/backlog?status=${filter}`,
+            ? "/api/backlog?stage=triaged"
+            : `/api/backlog?status=${filter}&stage=triaged`,
         ),
         fetch("/api/projects"),
       ]);
@@ -263,32 +276,45 @@ export default function BacklogPage() {
       >
         ← Back to projects
       </Link>
-      <header className="mt-3 mb-4 flex items-start justify-between gap-3">
-        <div>
+      {/* At 375px the old header gave three lines of explanatory prose the
+          same weight as the list itself, and squeezed "Sync Notes" into a
+          column narrow enough to wrap it onto three lines. The title and
+          the sync control share one row now; the explanation is one tap
+          away for the one time anyone needs it. */}
+      <header className="mb-3 mt-3">
+        <div className="flex items-center justify-between gap-2">
           <h1 className="text-xl font-semibold tracking-tight text-zinc-50">
             Backlog
           </h1>
-          <p className="mt-1 text-sm text-kraken-shadow">
-            Cross-project ideas. Assign one to a project, then burn down to
-            dispatch as a task. Syncs with the &ldquo;DryDock Backlog&rdquo;
-            Apple Note.
+          <div className="flex shrink-0 items-center gap-2">
+            <SyncStatus
+              syncing={syncing}
+              lastSyncedAt={lastSyncedAt}
+              error={syncError}
+            />
+            <button
+              type="button"
+              onClick={() => void handleSync()}
+              disabled={busy || syncing}
+              aria-label="Sync with Apple Notes"
+              className="inline-flex min-h-[44px] shrink-0 items-center whitespace-nowrap rounded-md border border-kraken-boundless px-3 text-sm text-zinc-200 transition hover:bg-kraken-boundless/30 disabled:opacity-50"
+            >
+              ↻ Notes
+            </button>
+          </div>
+        </div>
+        <InlineDisclosure label="How does this list work?">
+          <p>
+            Cross-project ideas. Assign one to a project, then{" "}
+            <strong className="text-zinc-300">burn down</strong> to turn it
+            into a real task you can dispatch.
           </p>
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          <button
-            type="button"
-            onClick={() => void handleSync()}
-            disabled={busy || syncing}
-            className="inline-flex min-h-[44px] items-center rounded-md border border-kraken-boundless px-3 text-sm text-zinc-200 transition hover:bg-kraken-boundless/30 disabled:opacity-50"
-          >
-            ↻ Sync Notes
-          </button>
-          <SyncStatus
-            syncing={syncing}
-            lastSyncedAt={lastSyncedAt}
-            error={syncError}
-          />
-        </div>
+          <p>
+            Accepted items sync both ways with the &ldquo;⚓ DryDock
+            Backlog&rdquo; Apple Note. Inbox items don&apos;t — they only
+            reach the Note once you accept them.
+          </p>
+        </InlineDisclosure>
       </header>
 
       {error ? (
@@ -300,9 +326,23 @@ export default function BacklogPage() {
         </p>
       ) : null}
 
+      {/* The full form is the deliberate-planning path; the ⊕ button is
+          the hurried-capture one. Collapsed because the quick path covers
+          the common case, and two always-visible add controls on one
+          screen is a choice the user has to make before they can type. */}
+      <details className="group mb-3 [&_summary::-webkit-details-marker]:hidden">
+        <summary className="inline-flex min-h-[36px] cursor-pointer list-none items-center gap-1 text-xs text-kraken-ice underline-offset-2 hover:underline">
+          <span
+            aria-hidden="true"
+            className="text-[9px] transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none"
+          >
+            ▶
+          </span>
+          Add with a project
+        </summary>
       <form
         onSubmit={handleCreate}
-        className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-stretch"
+        className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-stretch"
       >
         <input
           type="text"
@@ -333,6 +373,13 @@ export default function BacklogPage() {
           Add
         </button>
       </form>
+      </details>
+
+      {/* Everything captured but not yet accepted, and everything already
+          in flight on GitHub. Both sit above the backlog because both are
+          more urgent than any idea in the list below. */}
+      <InboxPanel projects={projects} onChange={() => void refresh()} />
+      <GithubWorkPanel onChange={() => void refresh()} />
 
       <div className="mb-3 flex flex-wrap gap-2">
         {STATUS_FILTERS.map((s) => (
@@ -517,6 +564,8 @@ export default function BacklogPage() {
           ))}
         </ul>
       )}
+
+      <QuickAdd onAdded={() => void refresh()} />
     </>
   );
 }
