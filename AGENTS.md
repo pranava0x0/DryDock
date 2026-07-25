@@ -45,12 +45,14 @@ app/
   backlog/page.tsx              # Cross-project backlog. Inline ✏️ Edit, 🗑️ trash.
                                 # useAutoSync({intervalMs: 30_000}) + SyncStatus badge.
   settings/page.tsx             # Auto-cleanup worktree toggle + Provider budgets panel
-                                # (Claude reads live token usage from ~/.claude/projects;
-                                # Codex / Google AI Pro are deep-link-only). Claude card
-                                # refresh schedule: throttle-gated (≤1/min) interaction
-                                # triggers (mount, click, scroll, visibilitychange) +
-                                # idle-backoff ticker (60s, doubling to 30min cap, reset
-                                # by activity). See lib/util/{throttle-gate,idle-backoff}.
+                                # (Claude + Codex read live token usage from their local
+                                # CLI session logs; Google shows Antigravity activity
+                                # counts — turns, not tokens; every card keeps an
+                                # "Open ↗" deep link). Budget refresh schedule:
+                                # throttle-gated (≤1/min) interaction triggers (mount,
+                                # click, scroll, visibilitychange) + idle-backoff ticker
+                                # (60s, doubling to 30min cap, reset by activity).
+                                # See lib/util/{throttle-gate,idle-backoff}.
   api/
     projects/route.ts           # GET list, POST create
     projects/[id]/route.ts      # GET, PATCH, DELETE
@@ -71,10 +73,11 @@ app/
     backlog/[id]/burn/route.ts  # POST burn item into a task in the linked project
     backlog/sync/route.ts       # GET lastSyncedAt; POST bidirectional Apple Notes sync
     backlog/dedupe/route.ts     # POST collapse same-title rows + push consolidated state
-    provider-budgets/route.ts   # GET aggregated provider usage (Claude live from session
-                                # logs; Codex/Google return null — no public usage API).
-                                # In-process 60s cache, aligned with the Settings page's
-                                # client-side throttle gate.
+    provider-budgets/route.ts   # GET aggregated provider usage — Claude + Codex token
+                                # totals and Google activity counts, all read live from
+                                # local logs (each reader degrades to zeros or an error
+                                # object). In-process 60s cache, aligned with the
+                                # Settings page's client-side throttle gate.
 components/
   ProjectCard.tsx, TaskCard.tsx
   AddProjectModal.tsx, AddTaskModal.tsx
@@ -122,11 +125,28 @@ lib/
     claude.ts                   # stream-json provider; flattens text + emits usage
     claude-parse.ts             # pure parser for the stream-json line protocol
     claude-usage.ts             # Walks ~/.claude/projects/**/*.jsonl and aggregates
-                                # message.usage blocks into weekly (rolling 7d) +
-                                # monthly (calendar) token totals. Powers the live
+                                # message.usage blocks into 5h + weekly (rolling 7d)
+                                # + monthly (calendar) token totals. Powers the live
                                 # Claude card in Settings → Provider budgets.
-    budget-links.ts             # Deep-link targets for Codex / Google AI Pro
-                                # (subscriptions with no public usage API).
+    codex-usage.ts              # Walks ~/.codex/sessions/**/*.jsonl rollout logs and
+                                # sums per-turn last_token_usage deltas from
+                                # token_count events into weekly + monthly token
+                                # windows (no 5h window). Powers the live Codex card.
+    gemini-usage.ts             # Walks ~/.gemini/antigravity/brain/<conv>/
+                                # .system_generated/logs/*.{jsonl,txt} step logs and
+                                # counts activity (prompts, model turns, tool calls)
+                                # into weekly + monthly windows — Antigravity records
+                                # no token counts on disk. Powers the Google card.
+    usage-mtime.ts              # Shared mtime pre-filter for the three usage readers:
+                                # skips files last written before the widest window
+                                # cutoff (12h safety margin, provably lossless).
+    codex-usage.test.ts         # Fixture-dir tests for the Codex reader (window
+                                # cutoffs, delta-vs-cumulative, malformed lines).
+    gemini-usage.test.ts        # Fixture-dir tests for the Antigravity reader
+                                # (step-type counting, txt + jsonl, missing root).
+    budget-links.ts             # Deep-link targets behind every card's "Open ↗"
+                                # button (these subscription tiers have no public
+                                # usage API).
     gemini.ts                   # gemini -p subprocess wrapper
     index.ts                    # registry
 docs/
@@ -200,7 +220,9 @@ Documented at length in [lib/orchestrator/backlog.ts](lib/orchestrator/backlog.t
 - Project discovery root: `~/Documents/Projects` by default. Override with `DRYDOCK_PROJECTS_ROOT` env var.
 - Claude OAuth session: `~/.claude/`
 - Claude Code session logs: `~/.claude/projects/<dash-encoded-cwd>/<sessionId>.jsonl` — read (numeric aggregation only, no content) by `lib/providers/claude-usage.ts` for the Settings → Provider budgets Claude card. Never write back.
+- Codex CLI session logs: `~/.codex/sessions/**/*.jsonl` (rollouts nested under `YYYY/MM/DD/`) — read (`token_count` aggregation only, no content) by `lib/providers/codex-usage.ts` for the Codex card. Never write back.
 - Gemini OAuth session: `~/.gemini/`
+- Antigravity step logs: `~/.gemini/antigravity/brain/<conversationId>/.system_generated/logs/*.{jsonl,txt}` — read (activity counts only: step type, timestamp, tool-call count; never message content) by `lib/providers/gemini-usage.ts` for the Google card. Never write back.
 - Cloudflare Tunnel credentials JSON: `~/.cloudflared/<UUID>.json`
 
 None of those should ever appear in `git diff`.
