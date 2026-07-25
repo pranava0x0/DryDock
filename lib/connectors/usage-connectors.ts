@@ -1,4 +1,11 @@
-import { replaceUsageDailyRange, type UsageDailyRow, type UsageProvider } from "../db/usage";
+import {
+  latestUsageDay,
+  replaceUsageDailyRange,
+  replaceUsageHourlyRange,
+  type UsageDailyRow,
+  type UsageHourlyRow,
+  type UsageProvider,
+} from "../db/usage";
 import { dayKeyOffset, parseDayKey } from "../util/day";
 import { scanClaudeSessions } from "./claude-scan";
 import { scanCodexSessions } from "./codex-scan";
@@ -50,6 +57,7 @@ const EPOCH_DAY = "1970-01-01";
 
 interface ScanOutcome {
   daily: UsageDailyRow[];
+  hourly: UsageHourlyRow[];
   itemsScanned: number;
   rootMissing: boolean;
 }
@@ -104,6 +112,7 @@ function makeUsageConnector(spec: UsageConnectorSpec): Connector {
       fromDay,
       outcome.daily,
     );
+    replaceUsageHourlyRange(spec.provider, fromDay, outcome.hourly);
 
     // Yesterday, not today: a turn at 23:59:58 can be flushed to disk
     // after midnight, so freezing the cursor at today would clip the
@@ -111,12 +120,17 @@ function makeUsageConnector(spec: UsageConnectorSpec): Connector {
     setCursor(spec.key, dayKeyOffset(now, 1));
     setLastSyncAt(spec.key, Math.floor(now.getTime() / 1000));
 
-    const status: ConnectorStatus =
-      outcome.daily.length > 0 ? "ok" : "no-data";
-    const reason =
-      status === "no-data"
-        ? "source is present but recorded no activity in range"
-        : null;
+    // Health describes the SOURCE, not this incremental slice. An
+    // incremental collect resuming from yesterday's cursor legitimately
+    // produces zero rows whenever the user didn't touch that provider
+    // today — reporting "no-data" for that put a ⚠ badge on a Codex card
+    // showing 312M tokens. So: ask the ledger whether this provider has
+    // ever produced anything, and only then say no-data.
+    const everProduced = latestUsageDay(spec.provider) !== null;
+    const status: ConnectorStatus = everProduced ? "ok" : "no-data";
+    const reason = everProduced
+      ? null
+      : "source is present but has never recorded any activity";
     lastOutcome.set(spec.key, { status, reason });
     return {
       key: spec.key,
@@ -212,6 +226,7 @@ export const claudeLocalConnector = makeUsageConnector({
     );
     return {
       daily: result.daily,
+      hourly: result.hourly,
       itemsScanned: result.filesScanned,
       rootMissing: result.rootMissing,
     };
@@ -231,6 +246,7 @@ export const codexLocalConnector = makeUsageConnector({
     );
     return {
       daily: result.daily,
+      hourly: result.hourly,
       itemsScanned: result.filesScanned,
       rootMissing: result.rootMissing,
     };
@@ -250,6 +266,7 @@ export const antigravityLocalConnector = makeUsageConnector({
     );
     return {
       daily: result.daily,
+      hourly: result.hourly,
       itemsScanned: result.conversationsScanned,
       rootMissing: result.rootMissing,
     };

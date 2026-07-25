@@ -3,6 +3,26 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { AnalyticsSummary } from "@/lib/db/analytics";
+import { UsageTab } from "@/components/UsageTab";
+
+/**
+ * Analytics is three tabs (EP-10 Spec B): **Runs** is the original page,
+ * unchanged; **Usage** is the all-provider ledger; **Flow** is EP-11's
+ * GitHub view. One tap from anywhere in the PWA, no forms.
+ *
+ * The tab choice is remembered in sessionStorage — not localStorage:
+ * "which tab was I on" is a property of this visit, and a month-old
+ * preference reasserting itself is more surprising than useful.
+ */
+type Tab = "runs" | "usage" | "flow";
+
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: "runs", label: "Runs" },
+  { id: "usage", label: "Usage" },
+  { id: "flow", label: "Flow" },
+];
+
+const TAB_STORAGE_KEY = "drydock.analytics.tab";
 
 function fmt$$(n: number): string {
   if (n === 0) return "$0.00";
@@ -89,17 +109,22 @@ function TrendGrid({ data }: { data: AnalyticsSummary["daily_trend"] }) {
 }
 
 export default function AnalyticsPage() {
-  const [data, setData] = useState<AnalyticsSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("runs");
 
+  // Read after mount, never during render: sessionStorage doesn't exist
+  // on the server, and reading it in the initial state would break the
+  // hydration match.
   useEffect(() => {
-    fetch("/api/analytics")
-      .then((r) => r.json())
-      .then((d: AnalyticsSummary) => setData(d))
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+    const stored = sessionStorage.getItem(TAB_STORAGE_KEY);
+    if (stored === "runs" || stored === "usage" || stored === "flow") {
+      setTab(stored);
+    }
   }, []);
+
+  const selectTab = (next: Tab): void => {
+    setTab(next);
+    sessionStorage.setItem(TAB_STORAGE_KEY, next);
+  };
 
   return (
     <section>
@@ -115,6 +140,64 @@ export default function AnalyticsPage() {
         </Link>
       </div>
 
+      <div
+        role="tablist"
+        aria-label="Analytics views"
+        className="mb-4 flex gap-2"
+      >
+        {TABS.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === entry.id}
+            onClick={() => selectTab(entry.id)}
+            className={`min-h-[36px] rounded-full px-4 text-xs font-medium transition ${
+              tab === entry.id
+                ? "bg-kraken-ice text-kraken-deep"
+                : "border border-kraken-boundless text-zinc-300 hover:bg-kraken-boundless/30"
+            }`}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "runs" ? <RunsTab /> : null}
+      {tab === "usage" ? <UsageTab /> : null}
+      {tab === "flow" ? <FlowTab /> : null}
+    </section>
+  );
+}
+
+function FlowTab() {
+  return (
+    <div className="rounded-lg border border-dashed border-kraken-boundless p-8 text-center">
+      <p aria-hidden="true" className="text-3xl">🏗️</p>
+      <p className="mt-2 text-sm text-zinc-300">Code flow lands with EP-11.</p>
+      <p className="mt-1 text-xs text-kraken-shadow">
+        Commit and PR cadence across all repos, private included, with AI
+        attribution.
+      </p>
+    </div>
+  );
+}
+
+function RunsTab() {
+  const [data, setData] = useState<AnalyticsSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/analytics")
+      .then((r) => r.json())
+      .then((d: AnalyticsSummary) => setData(d))
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <>
       {loading ? (
         <p className="text-sm text-kraken-shadow">loading…</p>
       ) : error ? (
@@ -265,6 +348,6 @@ export default function AnalyticsPage() {
           ) : null}
         </div>
       ) : null}
-    </section>
+    </>
   );
 }

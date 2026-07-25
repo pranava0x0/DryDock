@@ -264,6 +264,75 @@ export function usageBy(
     .all(...params) as UsageSlice[];
 }
 
+// ── Hourly rhythm ────────────────────────────────────────────────────────
+
+export interface UsageHourlyRow {
+  day: string;
+  hour: number;
+  provider: UsageProvider;
+  turns: number;
+  events: number;
+}
+
+/**
+ * Replace one provider's hourly counts from `fromDay` onward, in the same
+ * transaction shape (and for the same reason) as the daily ledger.
+ */
+export function replaceUsageHourlyRange(
+  provider: UsageProvider,
+  fromDay: string,
+  rows: UsageHourlyRow[],
+): number {
+  const db = getDb();
+  const del = db.prepare(
+    `DELETE FROM usage_hourly WHERE provider = ? AND day >= ?`,
+  );
+  const ins = db.prepare(
+    `INSERT INTO usage_hourly (day, hour, provider, turns, events)
+     VALUES (@day, @hour, @provider, @turns, @events)
+     ON CONFLICT(day, hour, provider) DO UPDATE SET
+       turns = excluded.turns,
+       events = excluded.events`,
+  );
+  const run = db.transaction((batch: UsageHourlyRow[]) => {
+    del.run(provider, fromDay);
+    for (const row of batch) ins.run(row);
+  });
+  run(rows);
+  return rows.length;
+}
+
+export interface RhythmCell {
+  /** 0 = Sunday, matching Date#getDay. */
+  weekday: number;
+  hour: number;
+  turns: number;
+  events: number;
+}
+
+/**
+ * Turns and events bucketed by (weekday, hour) over a day range.
+ *
+ * Weekday is computed in SQLite from `day` with `strftime('%w')`. `day` is
+ * already a local calendar date, so this is a pure string operation — no
+ * timezone conversion happens here, and none should: the bucketing was
+ * settled when the row was written.
+ */
+export function usageRhythm(q: UsageQuery = {}): RhythmCell[] {
+  const { clause, params } = whereFor(q);
+  return getDb()
+    .prepare(
+      `SELECT CAST(strftime('%w', day) AS INTEGER) AS weekday,
+              hour,
+              COALESCE(SUM(turns), 0)  AS turns,
+              COALESCE(SUM(events), 0) AS events
+         FROM usage_hourly ${clause}
+        GROUP BY weekday, hour
+        ORDER BY weekday ASC, hour ASC`,
+    )
+    .all(...params) as RhythmCell[];
+}
+
 /** Newest day present for a provider, or null when it has no rows yet. */
 export function latestUsageDay(provider?: UsageProvider): string | null {
   const { clause, params } = whereFor({ provider });

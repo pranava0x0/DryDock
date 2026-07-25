@@ -469,3 +469,52 @@ describe("cross-connector", () => {
     expect(listUsageDaily({ provider: "claude" })).toHaveLength(1);
   });
 });
+
+describe("connector health describes the source, not the slice", () => {
+  it("stays ok when an incremental collect finds nothing new", async () => {
+    // The bug this pins: after the first collect the cursor sits at
+    // yesterday, so a re-collect on a day the user didn't touch Codex
+    // legitimately produces zero rows. Reporting that as "no-data" put a
+    // ⚠ badge on a card showing 312M tokens.
+    writeClaudeSession("-p", "s", [
+      claudeTurn({
+        sessionId: "s",
+        ts: localIso(2026, 7, 20, 10),
+        cwd: "/Users/me/Projects/DryDock",
+        model: "claude-sonnet",
+        input: 100,
+      }),
+    ]);
+
+    const first = await claudeLocalConnector.collect({
+      force: true,
+      now: new Date(2026, 6, 21, 9),
+    });
+    expect(first.status).toBe("ok");
+
+    // Walk the cursor forward past the data. The third collect scans a
+    // range containing no turns at all and writes nothing — the state
+    // that used to report "no-data" and badge a populated card.
+    await claudeLocalConnector.collect({
+      force: true,
+      now: new Date(2026, 6, 23, 9),
+    });
+    const third = await claudeLocalConnector.collect({
+      force: true,
+      now: new Date(2026, 6, 25, 9),
+    });
+    expect(third.rowsWritten).toBe(0);
+    expect(third.status).toBe("ok");
+    expect((await claudeLocalConnector.health()).status).toBe("ok");
+    // And the history is still there — an empty incremental slice must
+    // never look like a reason to forget what was already collected.
+    expect(listUsageDaily({ provider: "claude" })).toHaveLength(1);
+  });
+
+  it("says no-data only when the source has never produced anything", async () => {
+    mkdirSync(claudeDir, { recursive: true });
+    const result = await claudeLocalConnector.collect({ force: true });
+    expect(result.status).toBe("no-data");
+    expect(result.reason).toContain("never recorded");
+  });
+});

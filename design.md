@@ -32,8 +32,13 @@ Provider brand colors are kept separate from the chrome palette so the user can 
 
 | Token | Tailwind | Use |
 |---|---|---|
-| Claude | `bg-violet-500/15 text-violet-300 ring-violet-500/30` | ProviderBadge for `claude` runs |
-| Gemini | `bg-blue-500/15 text-blue-300 ring-blue-500/30` | ProviderBadge for `gemini` runs |
+| Claude | `bg-violet-500/15 text-violet-300 ring-violet-500/30` | ProviderBadge for `claude` runs; Claude series in Analytics → Usage |
+| Gemini / Google AI | `bg-blue-500/15 text-blue-300 ring-blue-500/30` | ProviderBadge for `gemini` runs; Google series in Analytics → Usage |
+| OpenAI / Codex | `bg-teal-500/15 text-teal-300 ring-teal-500/30` | Codex series in Analytics → Usage and the Settings budget card |
+
+**Why teal for Codex, and not emerald** (EP-10; this palette addition is deliberate — the "don't" list below forbids ad-hoc provider colors, so adding a provider requires editing this table first). Emerald was the obvious first choice and is wrong: it already means **Done** in the status scale, so an emerald Codex bar sitting next to an emerald "success" pill reads as a status, not a brand. Everything else with enough separation is spoken for or too close to something that is — indigo reads as violet (Claude), cyan reads as `kraken-ice` (the CTA accent), orange reads as amber (Running), rose reads as `kraken-alert` (Failed), lime reads as emerald. Teal is the remaining hue with real separation; its nearest neighbour is Gemini blue, and at pill scale `text-teal-300` and `text-blue-300` are distinguishable. If a future palette pass frees emerald up, revisit — but never let two providers or a provider and a status share a hue.
+
+Providers are **never** distinguished by intensity of the same hue. Three shades of blue is not a legend anyone can read at 375px.
 
 Contrast is spot-checked, not automated. Worth adding: a vitest that parses the token table above and asserts ≥ 4.5:1 for every text/bg pair actually rendered (pill text on pill bg, `kraken-shadow` on `kraken-deep`, etc.) — near-free guard, catches violations at edit time.
 
@@ -65,6 +70,18 @@ Pills use `bg-X/15 text-X-* ring-X/30 ring-1 ring-inset` across colors so the ey
 - Radii in use (keep to this scale): `rounded-md` (buttons, inputs — the default), `rounded-lg` (cards, panels), `rounded-full` (pills, badges, FAB), `rounded-2xl` (bottom sheets/modals). Don't introduce new radius steps.
 - Motion: `animate-pulse` for the two live indicators (SyncStatus dot, RunningTasksPanel ⬤) — no other animation today; CSS transitions only.
 - Respect `prefers-reduced-motion`: kill `animate-pulse` and any future transition when set.
+
+## Charts
+
+No chart library. Every chart in DryDock is CSS — flex rows of divs with a percentage height or width, `tabular-nums` for the figures beside them. The 30-day trend on Analytics → Runs set the pattern; Analytics → Usage follows it (stacked model-mix bars, an hour×weekday rhythm grid, a dense daily trend). A charting dependency would add more bundle weight than the entire app currently ships for four card types.
+
+Rules that keep CSS charts honest:
+
+- **Dense, not sparse.** A day with no activity renders as a zero-height bar, never as a missing element. A gap in a bar row reads as "the chart ends here" rather than "nothing happened that day."
+- **Never fabricate a zero.** A provider that has no data is different from a provider that has zero usage. The former renders its empty state ("no local data — deep link"), the latter renders zeros. Getting these backwards is the single most misleading thing this UI can do.
+- **Label the unit when it differs.** Google records activity counts, not tokens; its cards say "activity" and are never summed into a token total.
+- **A percentage always carries its age.** A quota reading is only meaningful with "as of N min ago" beside it.
+- **`title` on every bar.** Hover/long-press is the only affordance a CSS chart has for exact values.
 
 ## Touch targets
 

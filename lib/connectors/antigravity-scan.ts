@@ -3,8 +3,12 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { mayContainRecentTurns } from "../providers/usage-mtime";
-import { localDayKey } from "../util/day";
-import { emptyUsageRow, type UsageDailyRow } from "../db/usage";
+import { localDayKey, localHour } from "../util/day";
+import {
+  emptyUsageRow,
+  type UsageDailyRow,
+  type UsageHourlyRow,
+} from "../db/usage";
 
 /**
  * Per-day scan of Google Antigravity's IDE step logs.
@@ -24,6 +28,7 @@ import { emptyUsageRow, type UsageDailyRow } from "../db/usage";
 
 export interface AntigravityScanResult {
   daily: UsageDailyRow[];
+  hourly: UsageHourlyRow[];
   conversationsScanned: number;
   latestActivityAt: string | null;
   rootMissing: boolean;
@@ -44,6 +49,7 @@ export async function scanAntigravityActivity(
   } catch {
     return {
       daily: [],
+      hourly: [],
       conversationsScanned: 0,
       latestActivityAt: null,
       rootMissing: true,
@@ -51,6 +57,7 @@ export async function scanAntigravityActivity(
   }
 
   const daily = new Map<string, Accumulator>();
+  const hourly = new Map<string, UsageHourlyRow>();
   let conversationsScanned = 0;
   let latestActivityAt: string | null = null;
 
@@ -72,7 +79,7 @@ export async function scanAntigravityActivity(
       const logPath = join(logsDir, file);
       if (!(await mayContainRecentTurns(logPath, since))) continue;
       scanned = true;
-      await scanLog(logPath, conv, since, daily, (ts) => {
+      await scanLog(logPath, conv, since, daily, hourly, (ts) => {
         if (latestActivityAt === null || ts > latestActivityAt) {
           latestActivityAt = ts;
         }
@@ -85,6 +92,7 @@ export async function scanAntigravityActivity(
 
   return {
     daily: [...daily.values()].map((a) => a.row),
+    hourly: [...hourly.values()],
     conversationsScanned,
     latestActivityAt,
     rootMissing: false,
@@ -96,6 +104,7 @@ async function scanLog(
   conversationId: string,
   since: Date,
   daily: Map<string, Accumulator>,
+  hourly: Map<string, UsageHourlyRow>,
   onLatest: (ts: string) => void,
 ): Promise<void> {
   const stream = createReadStream(filePath, { encoding: "utf-8" });
@@ -135,8 +144,19 @@ async function scanLog(
       // `turns` counts model responses specifically, so the Usage tab can
       // say "N model turns" rather than the much larger raw step count
       // (which includes every file view and tool call).
-      if (parsed.type === "PLANNER_RESPONSE") acc.row.turns += 1;
+      const isModelTurn = parsed.type === "PLANNER_RESPONSE";
+      if (isModelTurn) acc.row.turns += 1;
       acc.conversations.add(conversationId);
+
+      const hour = localHour(at);
+      const hourKey = `${day} ${hour}`;
+      let hourRow = hourly.get(hourKey);
+      if (!hourRow) {
+        hourRow = { day, hour, provider: "google", turns: 0, events: 0 };
+        hourly.set(hourKey, hourRow);
+      }
+      hourRow.events += 1;
+      if (isModelTurn) hourRow.turns += 1;
     }
   } finally {
     rl.close();

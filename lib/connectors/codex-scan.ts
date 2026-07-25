@@ -5,8 +5,12 @@ import { createInterface } from "node:readline";
 import { mayContainRecentTurns } from "../providers/usage-mtime";
 import { collectRolloutFiles } from "../providers/codex-usage";
 import { projectKeyFromCwd } from "../providers/claude-projects";
-import { localDayKey } from "../util/day";
-import { emptyUsageRow, type UsageDailyRow } from "../db/usage";
+import { localDayKey, localHour } from "../util/day";
+import {
+  emptyUsageRow,
+  type UsageDailyRow,
+  type UsageHourlyRow,
+} from "../db/usage";
 
 /**
  * Per-day / per-model / per-project scan of the Codex CLI's rollout logs,
@@ -30,6 +34,7 @@ import { emptyUsageRow, type UsageDailyRow } from "../db/usage";
 
 export interface CodexScanResult {
   daily: UsageDailyRow[];
+  hourly: UsageHourlyRow[];
   filesScanned: number;
   latestTurnAt: string | null;
   /** True when neither the sessions root nor the archive exists. */
@@ -49,6 +54,7 @@ export async function scanCodexSessions(
   if (files.length === 0) {
     return {
       daily: [],
+      hourly: [],
       filesScanned: 0,
       latestTurnAt: null,
       rootMissing: true,
@@ -56,13 +62,14 @@ export async function scanCodexSessions(
   }
 
   const daily = new Map<string, Accumulator>();
+  const hourly = new Map<string, UsageHourlyRow>();
   let filesScanned = 0;
   let latestTurnAt: string | null = null;
 
   for (const { path, sessionKey } of files) {
     if (!(await mayContainRecentTurns(path, since))) continue;
     filesScanned += 1;
-    await scanRollout(path, sessionKey, since, daily, (ts) => {
+    await scanRollout(path, sessionKey, since, daily, hourly, (ts) => {
       if (latestTurnAt === null || ts > latestTurnAt) latestTurnAt = ts;
     });
   }
@@ -71,6 +78,7 @@ export async function scanCodexSessions(
 
   return {
     daily: [...daily.values()].map((a) => a.row),
+    hourly: [...hourly.values()],
     filesScanned,
     latestTurnAt,
     rootMissing: false,
@@ -82,6 +90,7 @@ async function scanRollout(
   sessionKey: string,
   since: Date,
   daily: Map<string, Accumulator>,
+  hourly: Map<string, UsageHourlyRow>,
   onLatest: (ts: string) => void,
 ): Promise<void> {
   const stream = createReadStream(filePath, { encoding: "utf-8" });
@@ -152,6 +161,15 @@ async function scanRollout(
       acc.row.total_tokens += turn.total;
       acc.row.turns += 1;
       acc.sessionKeys.add(sessionKey);
+
+      const hour = localHour(at);
+      const hourKey = `${day} ${hour}`;
+      let hourRow = hourly.get(hourKey);
+      if (!hourRow) {
+        hourRow = { day, hour, provider: "codex", turns: 0, events: 0 };
+        hourly.set(hourKey, hourRow);
+      }
+      hourRow.turns += 1;
     }
   } finally {
     rl.close();

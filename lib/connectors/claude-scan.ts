@@ -7,8 +7,12 @@ import {
   projectKeyFromCwd,
   projectKeyFromEncodedDir,
 } from "../providers/claude-projects";
-import { localDayKey } from "../util/day";
-import { emptyUsageRow, type UsageDailyRow } from "../db/usage";
+import { localDayKey, localHour } from "../util/day";
+import {
+  emptyUsageRow,
+  type UsageDailyRow,
+  type UsageHourlyRow,
+} from "../db/usage";
 
 /**
  * One pass over `~/.claude/projects/*​/*.jsonl` producing everything
@@ -60,6 +64,8 @@ export interface ScannedSession {
 export interface ScanResult {
   /** Ledger rows for days at or after the scan's `since`. */
   daily: UsageDailyRow[];
+  /** Turn counts by local hour, for the rhythm heatmap. */
+  hourly: UsageHourlyRow[];
   sessions: ScannedSession[];
   prLinks: PrLink[];
   filesScanned: number;
@@ -94,6 +100,7 @@ export async function scanClaudeSessions(
   since: Date = new Date(0),
 ): Promise<ScanResult> {
   const daily = new Map<string, Accumulator>();
+  const hourly = new Map<string, UsageHourlyRow>();
   const sessions = new Map<string, SessionAccumulator>();
   const prLinks: PrLink[] = [];
   let filesScanned = 0;
@@ -105,6 +112,7 @@ export async function scanClaudeSessions(
   } catch {
     return {
       daily: [],
+      hourly: [],
       sessions: [],
       prLinks: [],
       filesScanned: 0,
@@ -133,6 +141,7 @@ export async function scanClaudeSessions(
       filesScanned += 1;
       await scanFile(filePath, encodedDir, since, {
         daily,
+        hourly,
         sessions,
         prLinks,
         onLatest: (ts) => {
@@ -153,6 +162,7 @@ export async function scanClaudeSessions(
 
   return {
     daily: [...daily.values()].map((a) => a.row),
+    hourly: [...hourly.values()],
     sessions: [...sessions.values()].map(finalizeSession),
     prLinks,
     filesScanned,
@@ -196,6 +206,7 @@ function finalizeSession(acc: SessionAccumulator): ScannedSession {
 
 interface ScanContext {
   daily: Map<string, Accumulator>;
+  hourly: Map<string, UsageHourlyRow>;
   sessions: Map<string, SessionAccumulator>;
   prLinks: PrLink[];
   onLatest: (ts: string) => void;
@@ -308,6 +319,15 @@ async function scanFile(
       acc.row.total_tokens += input + cached + output;
       acc.row.turns += 1;
       acc.sessionIds.add(sessionId);
+
+      const hour = localHour(at);
+      const hourKey = `${day} ${hour}`;
+      let hourRow = ctx.hourly.get(hourKey);
+      if (!hourRow) {
+        hourRow = { day, hour, provider: "claude", turns: 0, events: 0 };
+        ctx.hourly.set(hourKey, hourRow);
+      }
+      hourRow.turns += 1;
     }
   } finally {
     rl.close();

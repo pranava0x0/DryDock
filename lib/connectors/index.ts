@@ -65,6 +65,55 @@ export async function collectUsage(
   );
 }
 
+/**
+ * True while a collect started by `collectUsageInBackground` is still
+ * running, so a caller can tell "the ledger is empty" apart from "the
+ * ledger is still filling".
+ */
+let backgroundCollect: Promise<CollectResult[]> | null = null;
+
+export function isCollecting(): boolean {
+  return backgroundCollect !== null;
+}
+
+/**
+ * Start a collect without waiting for it, and answer from whatever the
+ * ledger already holds.
+ *
+ * Why this exists: the first collect on this machine took **83 seconds**
+ * — 270 Claude session logs totalling well over a gigabyte, and the mtime
+ * pre-filter can't skip them because they're all recent. Awaiting that
+ * inside a page load means the Usage tab spins for a minute and a half
+ * with nothing on screen, and a phone on a flaky tunnel gives up long
+ * before it finishes.
+ *
+ * So the dashboard reads what's there and says what's happening. A cold
+ * ledger shows "still reading your logs" rather than a fake zero; a warm
+ * one renders instantly while the refresh happens behind it. The
+ * connectors' own mutex means a second page load joins the running walk
+ * instead of starting another.
+ *
+ * Errors are swallowed deliberately: nobody is awaiting this promise, so
+ * an unhandled rejection here would be a process-level crash in exchange
+ * for information the next `health()` call reports anyway.
+ */
+export function collectUsageInBackground(
+  opts: { force?: boolean; now?: Date } = {},
+): void {
+  if (backgroundCollect) return;
+  backgroundCollect = collectUsage(opts)
+    .catch((): CollectResult[] => [])
+    .finally(() => {
+      backgroundCollect = null;
+    }) as Promise<CollectResult[]>;
+}
+
+/** True when no connector has ever completed a collect. */
+export async function hasCollectedEver(): Promise<boolean> {
+  const health = await usageHealth();
+  return health.some((h) => h.lastSyncAt !== null);
+}
+
 export async function usageHealth(): Promise<ConnectorHealth[]> {
   return Promise.all(USAGE_CONNECTORS.map((c) => c.health()));
 }

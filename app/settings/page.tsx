@@ -10,6 +10,7 @@ import {
   type RoutingRule,
 } from "@/lib/routing/rules";
 import type { ProviderName } from "@/lib/providers/types";
+import { SubscriptionEditor } from "@/components/SubscriptionEditor";
 
 // Idle-backoff knobs for the Claude budget refresh. baseMs lines up with
 // the throttle gate's 1/min cap (so a backoff fire never gets blocked at
@@ -1040,6 +1041,7 @@ export default function SettingsPage() {
                 );
               })}
             </ul>
+            <SubscriptionEditor />
           </div>
         </div>
       )}

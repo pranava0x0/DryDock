@@ -142,6 +142,22 @@ CREATE TABLE IF NOT EXISTS usage_daily (
   PRIMARY KEY (day, provider, surface, model, project_key)
 );
 
+-- Hour-of-day counts, for the "when do I actually work" rhythm heatmap.
+--
+-- Deliberately a separate, narrow table rather than an `hour` column on
+-- usage_daily: adding hour to that primary key would multiply its rows by
+-- up to 24x across every model and project dimension, to serve one card
+-- that only ever asks "how many turns in this hour". Weekday is derived
+-- from `day` at read time, so it can't drift out of sync with it.
+CREATE TABLE IF NOT EXISTS usage_hourly (
+  day        TEXT NOT NULL,              -- 'YYYY-MM-DD', LOCAL timezone
+  hour       INTEGER NOT NULL,           -- 0-23, LOCAL
+  provider   TEXT NOT NULL,
+  turns      INTEGER NOT NULL DEFAULT 0,
+  events     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, hour, provider)
+);
+
 -- What each subscription costs and allows. Manually entered (the only
 -- 100%-reliable source); EP-15 collectors may later write rows with a
 -- non-'manual' source, and manual always wins on conflict.
