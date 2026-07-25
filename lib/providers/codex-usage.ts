@@ -184,7 +184,9 @@ function sessionKeyFor(rootDir: string, filePath: string): string {
  * throwing — when neither root is readable; "Codex was never run here" is
  * an expected state, not an error.
  */
-async function collectRolloutFiles(rootDir: string): Promise<RolloutFile[]> {
+export async function collectRolloutFiles(
+  rootDir: string,
+): Promise<RolloutFile[]> {
   const byKey = new Map<string, RolloutFile>();
   // Order matters: the live root is walked first so its entry wins the
   // `has` check below if a rollout somehow exists in both places.

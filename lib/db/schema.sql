@@ -106,9 +106,81 @@ CREATE TABLE IF NOT EXISTS backlog_items (
   completed_at INTEGER
 );
 
+-- ── EP-10: the usage ledger ────────────────────────────────────────────
+-- Why this table exists: the three provider readers compute rolling
+-- windows on demand and throw them away, and Claude Code's own session
+-- logs rotate out after ~30 days (`cleanupPeriodDays`). History was
+-- actively evaporating. Every row here is derived from a local file, so
+-- a re-collect can always rebuild a day — but only for days whose source
+-- files still exist, which is exactly why we persist.
+--
+-- Grain: one row per (day × provider × surface × model × project). The
+-- collectors UPSERT, so re-collecting a partial day self-heals rather
+-- than double-counting.
+CREATE TABLE IF NOT EXISTS usage_daily (
+  day          TEXT NOT NULL,            -- 'YYYY-MM-DD', LOCAL timezone
+  provider     TEXT NOT NULL,            -- 'claude' | 'codex' | 'google'
+  surface      TEXT NOT NULL,            -- 'cli' | 'web' | 'import'
+  -- '' when unknown. Never guessed — an empty model renders as "unknown".
+  model        TEXT NOT NULL DEFAULT '',
+  -- Derived from the session's own cwd, never from Claude's lossy
+  -- directory encoding (see lib/providers/claude-projects.ts). '' when
+  -- the session recorded no cwd.
+  project_key  TEXT NOT NULL DEFAULT '',
+  input_tokens     INTEGER NOT NULL DEFAULT 0,
+  cached_tokens    INTEGER NOT NULL DEFAULT 0,
+  output_tokens    INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,  -- codex only today
+  total_tokens     INTEGER NOT NULL DEFAULT 0,
+  sessions     INTEGER NOT NULL DEFAULT 0,
+  turns        INTEGER NOT NULL DEFAULT 0,
+  -- Antigravity activity counts land here. Google records NO token counts
+  -- anywhere on disk, so its rows carry events and zero tokens — the UI
+  -- must label them "activity", never imply tokens.
+  events       INTEGER NOT NULL DEFAULT 0,
+  updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (day, provider, surface, model, project_key)
+);
+
+-- What each subscription costs and allows. Manually entered (the only
+-- 100%-reliable source); EP-15 collectors may later write rows with a
+-- non-'manual' source, and manual always wins on conflict.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  provider        TEXT PRIMARY KEY,      -- 'claude' | 'codex' | 'google'
+  plan_name       TEXT,
+  price_usd_month REAL,
+  renewal_day     INTEGER,               -- 1-31, or NULL if unknown
+  -- Cap semantics as prose, not as truth: these change too often to
+  -- hardcode. Seeded with sensible defaults, editable.
+  cap_notes       TEXT,
+  source          TEXT NOT NULL DEFAULT 'manual',
+  updated_at      INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+-- Point-in-time "% of the window consumed" readings. Token sums can't
+-- reproduce these — the providers don't publish denominators — so they
+-- come from sanctioned local surfaces (the Codex app-server, Claude's
+-- stats cache) or from the user typing what they saw. Always rendered
+-- with their age; a stale quota reading presented as current is a
+-- confident wrong value.
+CREATE TABLE IF NOT EXISTS quota_snapshots (
+  id          TEXT PRIMARY KEY,
+  provider    TEXT NOT NULL,
+  -- Quoted: WINDOW is a SQLite keyword (window functions). Kept as the
+  -- column name anyway because it's the word the providers use.
+  "window"    TEXT NOT NULL,             -- '5h' | 'week' | 'week_sonnet'
+  used_pct    REAL,                      -- NULL when genuinely unknown
+  resets_at   INTEGER,
+  source      TEXT NOT NULL,             -- 'app-server'|'stats-cache'|'manual'|'browser'
+  captured_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_project   ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status    ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_runs_task       ON runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_backlog_status  ON backlog_items(status);
 CREATE INDEX IF NOT EXISTS idx_backlog_project ON backlog_items(project_id);
 CREATE INDEX IF NOT EXISTS idx_backlog_ext     ON backlog_items(external_id);
+CREATE INDEX IF NOT EXISTS idx_usage_day       ON usage_daily(day);
+CREATE INDEX IF NOT EXISTS idx_usage_provider  ON usage_daily(provider, day);
+CREATE INDEX IF NOT EXISTS idx_quota_provider  ON quota_snapshots(provider, captured_at);
