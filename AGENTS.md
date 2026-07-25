@@ -8,7 +8,7 @@ A personal project orchestrator. It dispatches coding tasks to Claude Code / Gem
 
 ## Tech invariants
 
-- Next.js 15 App Router, TypeScript strict, Tailwind 3, React 19 RC.
+- Next.js 15 App Router, TypeScript strict, Tailwind 3, React 19.
 - API routes run on the **Node runtime** (`export const runtime = "nodejs"`). Never switch to Edge — the DB layer uses better-sqlite3 (native bindings) and the dispatcher spawns child processes.
 - SQLite via `better-sqlite3`, single connection per process, WAL mode. DB file lives at `~/.drydock/drydock.db` (outside the repo). Schema is sourced from [lib/db/schema.sql](lib/db/schema.sql) and executed on first connection.
 - All state mutations go through [lib/db/*.ts](lib/db). Don't write raw SQL in route handlers.
@@ -33,7 +33,7 @@ A personal project orchestrator. It dispatches coding tasks to Claude Code / Gem
 - **`dispatchTask` and `followUpTask` share `runAndFinalize`.** The run loop / gate / auto-cleanup / cancel / failure-reason / queue-drain logic lives once in `runAndFinalize`; the two entry points differ only in how they resolve the worktree (`resolveWorktree` callback) and whether they pass `resumeSessionId`. Don't fork this — a change to gate or cancel semantics must stay identical for first runs and follow-ups.
 - **"Latest run" needs a rowid tiebreak.** `getLatestRunForTask` / `listRunsForTask` order by `started_at DESC, rowid DESC`. `started_at` is `unixepoch()` **seconds**, so a follow-up created in the same second as its parent ties on `started_at`; without the `rowid` tiebreak the SSE route (which streams `getLatestRunForTask`) would show the *parent* run after a follow-up. Same class as the queue's FIFO tiebreak. See [DD-010](issues.md).
 
-## File map (Phase 1)
+## File map
 
 ```
 app/
@@ -41,6 +41,8 @@ app/
   page.tsx                      # Dashboard (client). Mounts useAutoSync() one-shot
                                 # for the "launch" Apple Notes sync.
   project/[id]/page.tsx         # Project detail + ProjectDocs reader
+  analytics/page.tsx            # Run analytics: stat boxes, 30-day trend, failure breakdown (DD-BL-33)
+  auth/page.tsx                 # Token-mode login (middleware redirect target, EP-1)
   discover/page.tsx             # Scan ~/Documents/Projects (DRYDOCK_PROJECTS_ROOT) and one-click import
   backlog/page.tsx              # Cross-project backlog. Inline ✏️ Edit, 🗑️ trash.
                                 # useAutoSync({intervalMs: 30_000}) + SyncStatus badge.
@@ -52,6 +54,9 @@ app/
                                 # idle-backoff ticker (60s, doubling to 30min cap, reset
                                 # by activity). See lib/util/{throttle-gate,idle-backoff}.
   api/
+    analytics/route.ts          # GET computed run/cost analytics summary (DD-BL-33)
+    auth/route.ts               # POST token login (sets httpOnly cookie) / DELETE logout (EP-1)
+    routing-rules/route.ts      # CRUD dispatch routing rules (DD-BL-32; UI currently hidden, DD-BL-35)
     projects/route.ts           # GET list, POST create
     projects/[id]/route.ts      # GET, PATCH, DELETE
     projects/[id]/docs/route.ts # GET issues.md / backlog.md / CLAUDE.md etc. inline
@@ -130,14 +135,15 @@ lib/
     gemini.ts                   # gemini -p subprocess wrapper
     index.ts                    # registry
 docs/
-  plan.md                       # full build plan — DELETE after Phase 3
+  improvement-plan-2026-07.md   # EP-1..9 roadmap (EP-1/EP-2 shipped; EP-3+ next)
+  analytics-capture-plan-2026-07.md  # EP-10..15 telemetry/capture/linkage track
   setup.md                      # Cloudflare Tunnel + CLI auth
 ```
 
 ## Working agreements
 
 - **Read the file before editing.** Standard CLAUDE.md rule applies.
-- **Check [security.md](security.md) before `npm install` (or any package install/upgrade).** It's the supply-chain advisory log. Refresh it if `Last updated` is >7 days stale. Active Mini Shai-Hulud / TeamPCP worm campaigns mean a bad version can land within minutes of a maintainer being phished.
+- **Check [`pranava0x0/vibe-coding-security`](https://github.com/pranava0x0/vibe-coding-security) before `npm install` (or any package install/upgrade).** No local `security.md` exists in this repo (see [CLAUDE.md](CLAUDE.md)) — the GitHub repo is the live source. Fetch `https://pranava0x0.github.io/vibe-coding-security/llms-ctx.txt` and cross-check the lockfile against the relevant `advisories/*.md`. Active Mini Shai-Hulud / TeamPCP worm campaigns mean a bad version can land within minutes of a maintainer being phished.
 - **Add a vitest test for every bug fix.** Suite is in `lib/**/*.test.ts` and runs sequentially (`fileParallelism: false` because tests use temp SQLite files).
 - **Comments only when WHY is non-obvious.** Don't narrate WHAT — names already do that.
 - **Mobile first.** If you change UI, resize the preview to 375×812 and verify before declaring done.
@@ -153,6 +159,17 @@ npm run typecheck      # tsc --noEmit, must pass
 npm test               # vitest run, must pass
 npm run build          # production build, used by CI / before deploy
 ```
+
+## Verifying changes
+
+| Change kind | Run |
+|---|---|
+| DB schema / migration | `npm test` + confirm `ensure()` was added in `migrate()` |
+| API route | `npm run typecheck` + `npm test` + exercise via curl/browser |
+| Frontend (component/styles) | Resize preview to 375×812, then 1280×800 |
+| Provider / dispatch logic | `npm test` + a `DRYDOCK_PROVIDER_STUB=1` dry run (`drydock-uat` skill) |
+| Cap / queue / cancel | `npm test` (`dispatch-cap.test.ts`, `stream-route.test.ts`) — verify against a prod build, not `next dev` (see DD-009) |
+| Dependency install/upgrade | Check `vibe-coding-security` advisories first, then `npm run build && npm test` |
 
 ## Where to add new things
 
@@ -192,6 +209,14 @@ Documented at length in [lib/orchestrator/backlog.ts](lib/orchestrator/backlog.t
 | Edit title in Notes | Detected via 1:1 orphan/new-line heuristic in `applyPulledLines` — same DB row, new title + external_id. Multi-edit windows skip the heuristic and treat lines as creates. |
 | Concurrent syncs | `inFlightSync` mutex collapses to one |
 | Apple Notes offline / unauthorized | Sync route returns structured 500; `SyncStatus` shows ⚠; rest of UI keeps working |
+
+## Escalate to a human when…
+
+- A schema change cross-cuts DB + API + frontend — sketch the migration in a `docs/` file first.
+- An Apple Notes sync scenario isn't covered by the conflict-resolution cheat sheet above.
+- Loosening the `irreversible done` rule or the id-stable write path (both protected in CLAUDE.md).
+- Changing an `autonomy` profile's Bash allowlist, or considering `--dangerously-skip-permissions` for any provider (banned).
+- The user says "ship it" but `npm test`/`npm run typecheck` is still failing for unrelated-looking reasons.
 
 ## What lives outside this repo
 

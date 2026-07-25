@@ -98,4 +98,4 @@ Cloudflare Tunnel relies on your local Node server staying reachable. In System 
 | `claude: command not found` in the agent output | `claude` isn't on the PATH visible to the Next.js process. Start `npm run dev` from a shell that resolves it. |
 | Stream stays empty forever | The CLI is prompting for auth. Run it once at the terminal to complete its OAuth flow. |
 | "Task is not pending" 409 | Two clicks reached `/run` within the same poll window. Refresh the page — the first dispatch is still in flight. |
-| DB locked errors under heavy use | We're on SQLite with WAL; if you ever need more concurrency, Phase 3 plans a Turso migration. |
+| DB locked errors under heavy use | We're on SQLite with WAL; a Turso migration is tracked as DD-BL-06 (deferred — see [improvement-plan-2026-07.md](improvement-plan-2026-07.md) §7: single-machine SQLite isn't the bottleneck for a one-human fleet). |

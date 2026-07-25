@@ -6,8 +6,7 @@ Per universal CLAUDE.md: every bug encounter and fix gets logged here. Active ta
 
 | ID | Date | Area | Description | Severity | Size | Cause | Status |
 |---|---|---|---|---|---|---|---|
-
-(none — Phase 1 just shipped)
+| DD-016 | 2026-07-25 | deps/security | `next` is pinned at 15.5.18, but the 2026-07-20 Next.js Security Release Program batch fixed 9 CVEs (4 high — incl. CVE-2026-64642 middleware/proxy bypass and CVE-2026-64641 Server Action CPU-DoS) in **15.5.21**. DryDock is a self-hosted App Router app whose auth is middleware-enforced behind a tunnel — squarely in scope. See `vibe-coding-security/advisories/2026-07-nextjs-july-security-release.md`. | P1 | S | Monthly Next.js security cadence outpaced the pinned version | Open — upgrade to `next@15.5.21` (`npm install` per `prevention/npm-hardening.md`: `--ignore-scripts`, then full test+build), re-verify middleware auth denies unauthenticated non-local requests |
 
 ## Resolved Summary
 

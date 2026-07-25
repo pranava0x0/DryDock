@@ -35,6 +35,8 @@ Provider brand colors are kept separate from the chrome palette so the user can 
 | Claude | `bg-violet-500/15 text-violet-300 ring-violet-500/30` | ProviderBadge for `claude` runs |
 | Gemini | `bg-blue-500/15 text-blue-300 ring-blue-500/30` | ProviderBadge for `gemini` runs |
 
+Contrast is spot-checked, not automated. Worth adding: a vitest that parses the token table above and asserts ≥ 4.5:1 for every text/bg pair actually rendered (pill text on pill bg, `kraken-shadow` on `kraken-deep`, etc.) — near-free guard, catches violations at edit time.
+
 ### Status
 
 - **Pending:** zinc — neutral, no action urgency
@@ -58,9 +60,15 @@ Pills use `bg-X/15 text-X-* ring-X/30 ring-1 ring-inset` across colors so the ey
 - Page padding: `px-4 py-6` on `main`; max width `max-w-5xl`.
 - Sheet/modal interior: `p-5` and `pb-[max(1.25rem,env(safe-area-inset-bottom))]`.
 
+## Radii, shadows, motion
+
+- Radii in use (keep to this scale): `rounded-md` (buttons, inputs — the default), `rounded-lg` (cards, panels), `rounded-full` (pills, badges, FAB), `rounded-2xl` (bottom sheets/modals). Don't introduce new radius steps.
+- Motion: `animate-pulse` for the two live indicators (SyncStatus dot, RunningTasksPanel ⬤) — no other animation today; CSS transitions only.
+- Respect `prefers-reduced-motion`: kill `animate-pulse` and any future transition when set.
+
 ## Touch targets
 
-Every interactive element is `min-h-[44px]` (or `h-14 w-14` for the FAB). This is non-negotiable — see `CLAUDE.md` "touch targets must be at least 44px."
+Every touch-usable interactive element is `min-h-[44px]` (or `h-14 w-14` for the FAB). Non-negotiable on touch — see `CLAUDE.md` "touch targets must be at least 44px." If a future dense desktop-only control ever needs natural scale, keep the 44px floor under `@media (pointer: coarse)` rather than dropping it — don't bloat desktop controls just because the mobile-first rule exists, and don't shrink touch targets to please desktop.
 
 ## Layout breakpoints
 
