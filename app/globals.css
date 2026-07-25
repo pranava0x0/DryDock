@@ -37,3 +37,27 @@ body {
   word-break: break-word;
   font-variant-ligatures: none;
 }
+
+/* design.md has required this since the motion section was written; it
+   was never actually implemented. Enforcing it globally is better than
+   per-component `motion-reduce:` classes, because a component added
+   later can't forget. `animate-pulse` on the two live indicators is the
+   main thing this stops — a pulsing dot is exactly the kind of
+   involuntary motion the setting exists to suppress. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Number columns line up. Applied via `tabular-nums` in markup, but set
+   here too for the mono stream/figures so a digit change never shifts
+   the layout under the reader's eye. */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}

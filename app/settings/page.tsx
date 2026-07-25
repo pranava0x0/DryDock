@@ -11,6 +11,7 @@ import {
 } from "@/lib/routing/rules";
 import type { ProviderName } from "@/lib/providers/types";
 import { SubscriptionEditor } from "@/components/SubscriptionEditor";
+import { InlineDisclosure } from "@/components/Disclosure";
 
 // Idle-backoff knobs for the Claude budget refresh. baseMs lines up with
 // the throttle gate's 1/min cap (so a backoff fire never gets blocked at
@@ -940,16 +941,27 @@ export default function SettingsPage() {
                 <span className="block text-sm font-medium text-zinc-100">
                   Auto-clean worktrees on success
                 </span>
+                {/* The one-liner stays visible; the reasoning you read
+                    once and never again goes behind a disclosure. Settings
+                    was 1.3 phone-screens of mostly-prose. */}
                 <span
                   id="auto-cleanup-help"
                   className="mt-1 block text-xs text-kraken-shadow"
                 >
-                  Removes the per-task git worktree after the agent succeeds (and
-                  the quality gate passes, when configured). The branch itself
-                  survives, so you can still <code>git checkout</code> it later.
-                  On by default — turn it off if you usually inspect agent
-                  changes in the worktree before merging.
+                  Removes the per-task worktree once the agent succeeds.
                 </span>
+                <InlineDisclosure label="When would I turn this off?">
+                  <p>
+                    The branch itself always survives, so you can{" "}
+                    <code>git checkout</code> the work later either way —
+                    cleanup only removes the checked-out directory.
+                  </p>
+                  <p>
+                    Turn it off if you habitually inspect the agent&apos;s
+                    changes in the worktree before merging. The gate still has
+                    to pass before anything is cleaned up.
+                  </p>
+                </InlineDisclosure>
                 {status ? (
                   <span className="mt-2 block text-xs text-kraken-ice">{status}</span>
                 ) : null}
@@ -963,10 +975,21 @@ export default function SettingsPage() {
                 Max concurrent agent runs
               </span>
               <span className="mt-1 block text-xs text-kraken-shadow">
-                Tasks beyond this cap queue up and start automatically as
-                running tasks finish. Each run is one CLI subprocess in its
-                own worktree.
+                Tasks beyond the cap queue and start as slots free up.
               </span>
+              <InlineDisclosure label="What does one run cost me?">
+                <p>
+                  Each run is one CLI subprocess in its own git worktree —
+                  its own checkout, its own branch, its own token spend.
+                  Three concurrent agents are three sets of tokens burning
+                  at once.
+                </p>
+                <p>
+                  The cap is enforced in the database, not in this button, so
+                  two taps can&apos;t both squeeze past it. Queued tasks
+                  survive a restart.
+                </p>
+              </InlineDisclosure>
               <input
                 type="number"
                 min={1}
@@ -992,11 +1015,25 @@ export default function SettingsPage() {
               Provider budgets
             </h2>
             <p className="mt-1 text-xs text-kraken-shadow">
-              Claude and OpenAI Codex read token usage from their local CLI
-              session logs; Google AI shows local Antigravity activity (turns,
-              not tokens). Cards show &ldquo;no data yet&rdquo; for a tool you
-              haven&apos;t run locally.
+              Read from local CLI logs — nothing leaves this Mac.
             </p>
+            <InlineDisclosure label="Where do these numbers come from?">
+              <p>
+                Claude and Codex log every turn&apos;s token counts locally as
+                they run, so these are real numbers rather than estimates.
+              </p>
+              <p>
+                Google is different: Antigravity records no token counts
+                anywhere on disk, so its card shows{" "}
+                <strong className="text-zinc-300">activity</strong> — prompts,
+                turns, tool calls — and never pretends to a token figure.
+              </p>
+              <p>
+                A card reading &ldquo;no data yet&rdquo; means that tool has
+                not run on this Mac, which is different from having used it
+                and spent nothing.
+              </p>
+            </InlineDisclosure>
             <ul className="mt-3 space-y-2">
               {PROVIDER_BUDGET_LINKS.map((p) => {
                 if (p.key === "claude") {

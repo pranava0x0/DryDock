@@ -10,10 +10,23 @@ Dark, port-at-night UI. The name is "DryDock" — the visual language leans into
 
 The DryDock identity uses two recurring marks:
 
-- **⚓ Anchor** — primary brand mark. Appears in the page wordmark (header), the app icon ([public/icon.svg](public/icon.svg)), and on the empty-state for a project (no tasks yet). The anchor reads "moored" / "ready to be deployed."
-- **🏗️ Crane** — secondary motif. Appears on the dashboard empty-state ("No projects in drydock yet"). Reinforces the shipyard metaphor without competing with the anchor.
+- **⚓ Anchor** — primary brand mark. Appears in the page wordmark (header), the app icon ([public/icon.svg](public/icon.svg)), on the empty-state for a project (no tasks yet), and on the "All services" card in Analytics → Usage. The anchor reads "moored" / "ready to be deployed."
+- **🏗️ Crane** — secondary motif. Appears on the dashboard empty-state ("No projects in drydock yet") and the not-yet-built Flow tab. Reinforces the shipyard metaphor without competing with the anchor.
 
 Don't introduce a third motif (no octopus, no kraken creature — too on-the-nose). The anchor + crane pair is intentionally restrained.
+
+### Depth: the waterline and the gantry rail
+
+Two structural elements in [app/layout.tsx](app/layout.tsx) give the page an actual place rather than a flat dark wash. Both are `aria-hidden`, `pointer-events-none`, and purely atmospheric — **nothing is legible only because of them**, so a rendering failure costs nothing.
+
+- **Waterline** — a fixed full-page gradient: a faint pool of Kraken Ice light at the top where the surface would be, deepening toward `rgba(0,8,16,0.6)` at the bottom. A dry dock is a basin the water is pumped out of; this is the water it sits in. One composited layer.
+- **Gantry rail** — a 1px horizontal gradient across the top of the sticky header, brightest at centre, standing in for the crane track that runs the length of a dock.
+
+If you add a third atmospheric element, delete one of these first. Atmosphere reads as intentional at two and as decoration at four.
+
+### Empty-state voice
+
+Empty states are nautical and specific, never generic ("No items"). They say what the space is for: "No projects in drydock yet", "No usage recorded in the last 30 days". They never imply failure when the truth is absence — see the Charts rules on fabricated zeros.
 
 ## Palette — Seattle Kraken-inspired
 
@@ -69,7 +82,7 @@ Pills use `bg-X/15 text-X-* ring-X/30 ring-1 ring-inset` across colors so the ey
 
 - Radii in use (keep to this scale): `rounded-md` (buttons, inputs — the default), `rounded-lg` (cards, panels), `rounded-full` (pills, badges, FAB), `rounded-2xl` (bottom sheets/modals). Don't introduce new radius steps.
 - Motion: `animate-pulse` for the two live indicators (SyncStatus dot, RunningTasksPanel ⬤) — no other animation today; CSS transitions only.
-- Respect `prefers-reduced-motion`: kill `animate-pulse` and any future transition when set.
+- Respect `prefers-reduced-motion`: enforced **globally** in [app/globals.css](app/globals.css), which collapses every animation and transition to ~0ms under the media query. Global rather than per-component `motion-reduce:` classes, because a component added later can't forget. (This was a documented rule with no implementation until EP-10.)
 
 ## Charts
 
@@ -82,6 +95,21 @@ Rules that keep CSS charts honest:
 - **Label the unit when it differs.** Google records activity counts, not tokens; its cards say "activity" and are never summed into a token total.
 - **A percentage always carries its age.** A quota reading is only meaningful with "as of N min ago" beside it.
 - **`title` on every bar.** Hover/long-press is the only affordance a CSS chart has for exact values.
+
+## Progressive disclosure (how we spend vertical space)
+
+DryDock is a 375×812-first PWA, and scrolling is the most expensive interaction on a phone held one-handed: it costs attention, loses your place, and buries the one number you opened the app for. Two dense screens had grown past it — Analytics → Usage ran several screens, and Settings was 1.3 screens of mostly *prose you read once and never need again*.
+
+The pattern is [components/Disclosure.tsx](components/Disclosure.tsx), in two forms:
+
+- **`<Disclosure>`** — a full collapsible panel. Used for the per-provider cards, Rhythm, and Projects on Analytics → Usage.
+- **`<InlineDisclosure>`** — a quiet inline "why?" line for explanatory prose. Used under each Settings control and under the fleet totals ("What's a turn? What's a token?").
+
+Both wrap native `<details>/<summary>`, not a `useState` toggle. That is deliberate: `<details>` is keyboard-operable and screen-reader-announced for free, it costs no JavaScript, and **the browser's own find-in-page opens a closed `<details>` to reveal a match** — content behind a React state toggle is invisible to Cmd-F entirely.
+
+**The rule that keeps this honest: a collapsed row must carry its headline figure.** A row reading just "Claude ▸" forces the tap it was supposed to save. "Claude · 18.14B tokens · 57.7k turns ▸" lets you scan the whole page and open only what you actually want. Collapse detail, never information.
+
+What may be collapsed: rationale, methodology, per-model breakdowns, historical charts. What may **not**: the headline number, a health warning, an error, or anything the user needs in order to decide whether to expand.
 
 ## Touch targets
 
