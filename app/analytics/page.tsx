@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { AnalyticsSummary } from "@/lib/db/analytics";
 import { UsageTab } from "@/components/UsageTab";
+import { FlowTab } from "@/components/FlowTab";
 
 /**
  * Analytics is three tabs (EP-10 Spec B): **Runs** is the original page,
@@ -167,19 +168,6 @@ export default function AnalyticsPage() {
       {tab === "usage" ? <UsageTab /> : null}
       {tab === "flow" ? <FlowTab /> : null}
     </section>
-  );
-}
-
-function FlowTab() {
-  return (
-    <div className="rounded-lg border border-dashed border-kraken-boundless p-8 text-center">
-      <p aria-hidden="true" className="text-3xl">🏗️</p>
-      <p className="mt-2 text-sm text-zinc-300">Code flow lands with EP-11.</p>
-      <p className="mt-1 text-xs text-kraken-shadow">
-        Commit and PR cadence across all repos, private included, with AI
-        attribution.
-      </p>
-    </div>
   );
 }
 

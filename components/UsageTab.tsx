@@ -285,12 +285,21 @@ export function UsageTab() {
 
       <FleetCard fleet={data.fleet} providers={data.providers} />
 
-      {data.providers.map((provider) => (
-        <ProviderCard key={provider.provider} usage={provider} />
-      ))}
-
-      <RhythmCard rhythm={data.rhythm} />
-      <ProjectsCard projects={data.projects} />
+      {/*
+        Below `md` this is one column — a phone has no horizontal room to
+        spend. From `md` up the cards pair off, and at `xl` they go
+        three-wide, because a 1600px display rendering a 375px column of
+        cards with 1200px of empty gutter is wasting the one thing a
+        desktop actually has. The collapsed rows are short enough that
+        two or three per row still scan cleanly.
+      */}
+      <div className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {data.providers.map((provider) => (
+          <ProviderCard key={provider.provider} usage={provider} />
+        ))}
+        <RhythmCard rhythm={data.rhythm} />
+        <ProjectsCard projects={data.projects} />
+      </div>
 
       <p className="text-[11px] leading-snug text-kraken-shadow">
         {data.fromDay} → {data.toDay} · every figure read from local files on

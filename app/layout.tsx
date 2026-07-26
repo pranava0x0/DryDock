@@ -71,7 +71,7 @@ export default function RootLayout({
             the brand and the app's name is already on the home-screen
             icon and the tab title.
           */}
-          <div className="mx-auto flex max-w-5xl items-center gap-1 px-4 py-1.5 sm:gap-3">
+          <div className="mx-auto flex max-w-5xl items-center gap-1 px-4 py-1.5 sm:gap-3 xl:max-w-[88rem]">
             <a
               href="/"
               aria-label="DryDock home"
@@ -103,7 +103,12 @@ export default function RootLayout({
             </div>
           </div>
         </header>
-        <main className="relative z-10 mx-auto max-w-5xl px-4 py-6">
+        {/* max-w-5xl (1024px) was right when every page was one column. With
+            a side rail on /backlog and three-wide cards on Usage, a 1600px
+            display was mostly gutter — so the container widens at `xl`.
+            It does NOT go full-bleed: past ~1400px, line length starts
+            hurting readability more than the extra width helps. */}
+        <main className="relative z-10 mx-auto max-w-5xl px-4 py-6 xl:max-w-[88rem]">
           {children}
         </main>
       </body>

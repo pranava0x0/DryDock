@@ -375,12 +375,20 @@ export default function BacklogPage() {
       </form>
       </details>
 
-      {/* Everything captured but not yet accepted, and everything already
-          in flight on GitHub. Both sit above the backlog because both are
-          more urgent than any idea in the list below. */}
-      <InboxPanel projects={projects} onChange={() => void refresh()} />
-      <GithubWorkPanel onChange={() => void refresh()} />
+      {/*
+        Below `lg`, inbox and GitHub stack above the list — on a phone,
+        "what needs deciding" and "what's already in flight" both outrank
+        browsing the backlog. From `lg` up they move into a sticky right
+        rail, so the list keeps the reading column and the triage surface
+        stays on screen while you scroll it.
+      */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-6">
+        <aside className="min-w-0 lg:order-2 lg:self-start lg:sticky lg:top-[4.5rem]">
+          <InboxPanel projects={projects} onChange={() => void refresh()} />
+          <GithubWorkPanel onChange={() => void refresh()} />
+        </aside>
 
+        <div className="min-w-0 lg:order-1">
       <div className="mb-3 flex flex-wrap gap-2">
         {STATUS_FILTERS.map((s) => (
           <button
@@ -564,6 +572,8 @@ export default function BacklogPage() {
           ))}
         </ul>
       )}
+        </div>
+      </div>
 
       <QuickAdd onAdded={() => void refresh()} />
     </>
