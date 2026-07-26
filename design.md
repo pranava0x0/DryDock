@@ -118,9 +118,13 @@ Every touch-usable interactive element is `min-h-[44px]` (or `h-14 w-14` for the
 ## Layout breakpoints
 
 Mobile-first with Tailwind's default scale:
-- Default (mobile): single column, FAB visible, modal slides up from bottom.
-- `sm` (640px): modals center.
-- `md` (768px) / `lg` (1024px): project grid goes 2-up / 3-up.
+- Default (mobile): single column, FAB visible, modal slides up from bottom. The header drops the "DryDock" wordmark and keeps the ⚓ — the app's name is already on the home-screen icon and the tab title, and reclaiming that width is what lets the nav have 44px targets *and* the budget pill fit in 375px.
+- `sm` (640px): modals center; the wordmark returns.
+- `md` (768px): Analytics → Usage and Flow cards go 2-up.
+- `lg` (1024px): project grid 3-up; `/backlog` grows a **sticky right rail** for the inbox and GitHub work, leaving the reading column to the list. Below `lg` those stack *above* the list — on a phone, "what needs deciding" outranks browsing.
+- `xl` (1280px): Usage cards go 3-up and the page container widens from `max-w-5xl` to `88rem`. It stops there rather than going full-bleed: past ~1400px, line length hurts readability more than the extra width helps.
+
+Grid containers holding `<Disclosure>` cards need **`items-start`**. Grid items stretch to the row height by default, so a collapsed card beside an open one grows a tall empty box under its summary.
 
 The stream viewer is a bottom sheet on mobile (`inset-x-0 bottom-0`) and a fixed right-side panel on desktop (`sm:right-4 sm:top-20 sm:w-[420px]`). It is `z-30` so it sits over the FAB (`z-10`) and below any future toast (`z-50`).
 

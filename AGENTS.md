@@ -32,6 +32,15 @@ A personal project orchestrator. It dispatches coding tasks to Claude Code / Gem
 - **Tasks are threads (EP-2).** A run captures the provider session id (`runs.session_id`) from claude's stream-json `init` event (parsed in [claude-parse.ts](lib/providers/claude-parse.ts) as a `session` AgentEvent — internal plumbing, never forwarded to SSE). `followUpTask` ([dispatch.ts](lib/orchestrator/dispatch.ts)) continues a **terminal** task by `claude -p --resume <session_id>` in the same worktree (reused if still attached, else re-attached from the surviving branch via `recreateWorktree`), writing a new `runs` row with `parent_run_id` set. `completeRun` persists `session_id ?? resumeSessionId`, so a follow-up that dies before Claude emits a fresh session id keeps the parent thread resumable instead of nulling it (DD-014); `createWorktree` uses `-B` + a prune/remove so re-attaching over a failed task's leftover branch can't collide and silently drop the agent into the project checkout (DD-012). Follow-ups do **not** re-run routing rules — steering stays on the parent run's provider so a rule can't silently switch models mid-thread. `POST /api/tasks/[id]/followup` resumes when a session exists; with no session (gemini, or a run that died before init) it falls back to a fresh run for a *failed* task, folding the feedback into the task description (`resumed:false`). Mid-run interactivity (answering prompts while the agent is live) is deliberately **out of scope** — follow-ups are post-run only.
 - **`dispatchTask` and `followUpTask` share `runAndFinalize`.** The run loop / gate / auto-cleanup / cancel / failure-reason / queue-drain logic lives once in `runAndFinalize`; the two entry points differ only in how they resolve the worktree (`resolveWorktree` callback) and whether they pass `resumeSessionId`. Don't fork this — a change to gate or cancel semantics must stay identical for first runs and follow-ups.
 - **Dependency installs are script-disabled — with exactly one vetted exception.** Install per `vibe-coding-security/prevention/npm-hardening.md`: `npm install --ignore-scripts` (or `npm ci --ignore-scripts`). That skips `better-sqlite3`'s `prebuild-install`, so the native binding goes missing and every DB test fails with "Could not locate the bindings file". Follow every install with `npm rebuild better-sqlite3 --foreground-scripts` — it's the one dependency here that genuinely needs its install script, and running it in the foreground means you'd see anything unexpected it did. Don't "fix" the failure by dropping `--ignore-scripts`. `next` is pinned **exactly** (no `^`) so a security batch is a deliberate upgrade, not a silent resolve (DD-016).
+- **The usage ledger's days are LOCAL, and collectors REPLACE a range rather than upserting.** Every provider writes UTC ISO timestamps, but "what did I use on Tuesday" is a question about the user's calendar — `toISOString().slice(0,10)` is the UTC answer in local clothing and files evening work on the wrong day. All conversion goes through [lib/util/day.ts](lib/util/day.ts), whose arithmetic is DST-safe. Collectors then call `replaceUsageDailyRange` (delete from the cursor day forward, reinsert, one transaction) instead of a plain upsert: an upsert can only add or overwrite, so a model the user stopped using would keep its row and every total would keep counting it. That's only sound because of the mtime pre-filter's guarantee — a file older than the cursor can't hold a turn after it — so **changing the pre-filter breaks the ledger**. The cursor advances to *yesterday*, not today, because a 23:59:58 turn can be flushed after midnight.
+- **There is exactly ONE Claude JSONL walker for the ledger.** [lib/connectors/claude-scan.ts](lib/connectors/claude-scan.ts) emits usage rows, session boundaries, and `pr-link` records in a single pass over the same 1.3 GB. A second walker would double the cold-read cost of the most expensive thing DryDock reads and let the two drift on what counts as a turn. Need a third thing? Add it to `ScanResult`. (`lib/providers/claude-usage.ts` is untouched and answers a different question — rolling 5h/weekly windows at a granularity days can't express.)
+- **Never render a confident wrong value — the ledger has four specific traps.** (1) Google records **no token counts anywhere**; its rows carry `events` and zeroed token columns, so `tokensAreReal` gates every surface and a Google row must never be summed into a token total. (2) A provider with no data reports *why* (`unavailable` + reason), never a zero — health describes the **source**, not the incremental slice, or an empty overnight collect badges a card showing 312M tokens. (3) An unpriced model contributes $0 **and** drags a rendered `coverage` figure; `claude-fable-5` has no published price and dominates these logs. (4) A quota percentage always renders its age.
+- **Commit attribution keys on the `noreply@` DOMAIN, not the trailer name.** Human `Co-authored-by:` trailers are common in these repos (pair commits, rebases, a second machine's git identity), so "has a trailer → AI" over-counts badly. Match `noreply@anthropic.com` / `noreply@openai.com`, case-insensitively (tool versions wrote both `Co-Authored-By` and `Co-authored-by`). Branch prefixes are a *weaker* fallback, so every AI-share number renders its **trailer coverage** beside it. [lib/insights/attribution.ts](lib/insights/attribution.ts).
+- **`/api/flow` reads local git clones, not the GitHub API.** Attribution needs full commit message bodies — that's where trailers live, and `gh search` doesn't reliably return them, so the API path yields no model breakdown at all. Local clones also make private repos a non-question and cost no rate limit. The trade (repos not cloned here are invisible) is stated in the UI.
+- **The inbox is the seam that keeps the backlog trustworthy.** `backlog_items.triaged_at IS NULL` = captured, not accepted. Every inbound feeder goes through [lib/orchestrator/intake.ts](lib/orchestrator/intake.ts) — never straight to `createBacklogItem` — so parsing, dedup, and the never-drop guarantee are written once. **Inbox rows never reach the Apple Note**; only accepted ones do, which is what keeps the Notes sync bit-for-bit unchanged. `manual` and `apple-notes` land pre-triaged (typing into a trusted surface is already deliberate); everything else waits. Dedup **never drops**: only an exact title match counts as the same item, and a near-match is inserted with a "possibly similar to" note — a swallowed idea is unrecoverable, an extra inbox row costs one tap.
+- **Capture markers are TRAILING-ONLY, and `p1` is the HIGHEST priority value.** "fix the #2 bug in p1 mode" is a title, not a project called "2". And `backlog_items.priority` sorts DESC, so p1 → 3; inverting that files every urgent capture at the bottom of the list.
+- **A migration that adds a NULL-means-something column needs a done-marker.** `triaged_at IS NULL` means "in the inbox", so the backfill stamping pre-existing rows must run **once** — `migration.backlog_triaged_at_backfilled` in `settings`. Without it, every process restart re-stamps genuinely-untriaged rows and silently empties the inbox into the backlog. Both directions are regression-pinned in `intake.test.ts`.
+- **Long collects don't block a page load.** The first usage collect took **83 seconds** here (270 recent session logs the mtime filter can't skip). `/api/usage` starts the walk and answers from the ledger as it stands (~140ms), reporting `collecting` so the UI says "still reading your logs" instead of rendering a cold ledger's zeros as fact. `/api/flow` caches its ~8s sweep for 5 minutes.
 - **"Latest run" needs a rowid tiebreak.** `getLatestRunForTask` / `listRunsForTask` order by `started_at DESC, rowid DESC`. `started_at` is `unixepoch()` **seconds**, so a follow-up created in the same second as its parent ties on `started_at`; without the `rowid` tiebreak the SSE route (which streams `getLatestRunForTask`) would show the *parent* run after a follow-up. Same class as the queue's FIFO tiebreak. See [DD-010](issues.md).
 
 ## File map
@@ -56,8 +65,17 @@ app/
                                 # click, scroll, visibilitychange) + idle-backoff ticker
                                 # (60s, doubling to 30min cap, reset by activity).
                                 # See lib/util/{throttle-gate,idle-backoff}.
+  analytics/page.tsx            # Tab shell: Runs | Usage | Flow (EP-10/EP-11)
   api/
     analytics/route.ts          # GET computed run/cost analytics summary (DD-BL-33)
+    usage/route.ts              # GET the usage ledger; collects in the BACKGROUND
+                                # (first walk is ~83s) and reports `collecting`
+    flow/route.ts               # GET commit/attribution flow from local git clones
+    subscriptions/route.ts      # GET/PUT plan facts; always source='manual'
+    capture/route.ts            # POST the five-second capture door → inbox
+    backlog/github/route.ts     # GET open PRs+issues; ?import=1 files issues
+    backlog/import/route.ts     # POST pull every project's own backlog.md
+    backlog/[id]/triage/route.ts # POST accept an inbox item into the backlog
     auth/route.ts               # POST token login (sets httpOnly cookie) / DELETE logout (EP-1)
     routing-rules/route.ts      # CRUD dispatch routing rules (DD-BL-32; UI currently hidden, DD-BL-35)
     projects/route.ts           # GET list, POST create
@@ -95,6 +113,27 @@ components/
   SyncStatus.tsx                # "Synced 30s ago" / "Syncing…" / "⚠ Sync failed" badge
   useAutoSync.ts                # Hook: one-shot on mount + optional interval polling
 lib/
+  connectors/                   # EP-10/11 read-only gatherers → rollup tables
+    types.ts                    #   Connector iface + registry keys + health
+    watermark.ts                #   settings-backed cursors (`connector.<key>.*`)
+    claude-scan.ts              #   THE single Claude JSONL walker (usage+sessions+pr-links)
+    codex-scan.ts               #   per-day/model/project; model from turn_context
+    antigravity-scan.ts         #   activity events only — Google logs no tokens
+    usage-connectors.ts         #   the three collectors + TTL/mutex/health
+    quota{,-codex,-claude}.ts   #   live cap-% from sanctioned local surfaces
+    git-flow.ts                 #   local `git log` sweep → attributed commits
+    github-work.ts              #   open PRs/issues via the `gh` CLI
+    github-issues-intake.ts     #   issues → backlog (pre-triaged)
+    project-backlogs.ts         #   each project's own backlog.md → inbox
+  insights/                     # pure read-models over the stores
+    api-prices.ts               #   API-equivalent value + coverage honesty
+    usage-summary.ts            #   Usage tab payload incl. fleet totals
+    attribution.ts              #   who wrote this commit (domain-keyed)
+    flow-summary.ts             #   Flow tab payload (5-min cache)
+  orchestrator/
+    capture.ts                  #   marker parsing + Jaccard dedup (pure)
+    intake.ts                   #   the ONE door into the inbox
+  util/day.ts                   # local-day keys; DST-safe. All day math here.
   api/json.ts                   # tiny ok/created/badRequest/notFound helpers
   util/throttle-gate.ts         # leading-edge throttle gate (closure + injectable
                                 # clock). Used by /settings to keep interaction-

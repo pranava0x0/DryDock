@@ -2,7 +2,9 @@
 
 > **Companion track to [improvement-plan-2026-07.md](improvement-plan-2026-07.md).** That plan's spine (EP-3 close the git loop → EP-4/5 triage + notifications) remains the product's top priority. This document adds a parallel track — **EP-10…EP-15** — covering four new feature families the base plan didn't scope: all-provider AI usage + subscription analytics, GitHub code-flow analytics, frictionless capture + durable backlog tracking, and linking the Daily Briefing / idea-generation satellites into DryDock. The two tracks are deliberately module-disjoint so they can interleave.
 >
-> **Status (2026-07-25):** planned. Research-grounded: live-verified GitHub GraphQL queries, on-disk inspection of all three providers' local logs, four web-research sweeps, and the full codebase inventory. Written on branch `jam/ai-usage-analytics-dashboard-c5041f`.
+> **Status (2026-07-26): partially shipped — see the implementation log at the end of this file.** Phase 0, EP-10 (all four specs), EP-11, and EP-12 Spec A/B are on `jam/vigilant-rubin-bcf209` (PR #8). EP-12 Spec C (iMessage), EP-13's push half, EP-14, and EP-15 remain.
+>
+> **Original status (2026-07-25):** planned. Research-grounded: live-verified GitHub GraphQL queries, on-disk inspection of all three providers' local logs, four web-research sweeps, and the full codebase inventory. Written on branch `jam/ai-usage-analytics-dashboard-c5041f`.
 
 ---
 
@@ -354,3 +356,71 @@ CREATE TABLE IF NOT EXISTS usage_daily (
 ## 10. Key sources
 
 Full citations live in the seven research reports (session transcripts). Load-bearing:  [Claude Code data directory](https://code.claude.com/docs/en/claude-directory) (`stats-cache.json`, 30-day `cleanupPeriodDays`) · [Codex app-server](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md) + [CodexBar's three-tier architecture](https://github.com/steipete/CodexBar/blob/main/docs/codex.md) · [Anthropic consumer terms](https://www.anthropic.com/legal/terms) (no-automation clause) · [Antigravity plans/quota docs](https://antigravity.google/docs/plans) · [ccusage](https://github.com/ryoppippi/ccusage) (multi-CLI local-log parsing prior art) · [Claude Code Desktop Scheduled Tasks](https://code.claude.com/docs/en/desktop-scheduled-tasks) + [Channels](https://code.claude.com/docs/en/channels) + [MCP](https://code.claude.com/docs/en/mcp) · [GitHub GraphQL rate limits](https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api) · [gh issue CLI](https://cli.github.com/manual/gh_issue_create) · [probot/metadata marker pattern](https://github.com/probot/metadata) · [imessage-exporter](https://github.com/ReagentX/imessage-exporter) (attributedBody/typedstream) · [git-ai](https://github.com/git-ai-project/git-ai) (line-level attribution ceiling) · [The lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/) · [Claude usage-limit semantics](https://explainx.ai/blog/claude-usage-limits-2026-timeline-explained) · [ChatGPT export](https://www.chatgptexporter.com/en/blog/how-to-export-chatgpt-to-json) · [Gemini Takeout](https://chatexport.guide/en/guides/gemini/) · Anthropic [Claude Code Analytics API](https://platform.claude.com/docs/en/manage-claude/claude-code-analytics-api) (org-only; local schema mirrors its shape for future compatibility).
+
+
+---
+
+## 11. Implementation log (2026-07-26)
+
+What actually shipped, and — more usefully — **where reality diverged from
+the plan**. Every divergence below was driven by inspecting real local
+data, and each is a place where following the plan literally would have
+produced a wrong number.
+
+### Shipped
+
+| Item | Notes |
+|---|---|
+| **Phase 0** | Next.js 15.5.21 (DD-016), `.github/dependabot.yml` with a 3-day cooldown (DD-BL-36), consumer deep-links (DD-BL-37), all three reader gaps (DD-BL-38). |
+| **EP-10 Spec A** | `usage_daily` + `usage_hourly`, three connectors, watermarks, `lib/db/usage.ts`. |
+| **EP-10 Spec B** | Analytics tab bar (Runs \| Usage \| Flow) + the Usage tab, CSS charts only. |
+| **EP-10 Spec C** | `subscriptions` table + `/api/subscriptions` + the Settings editor. |
+| **EP-10 Spec D** | `quota_snapshots`, the Codex app-server client, the Claude stats-cache probe. Both report `unavailable` here — see below. |
+| **EP-11** | `lib/insights/attribution.ts`, `lib/connectors/git-flow.ts`, `/api/flow`, the Flow tab. |
+| **EP-12 Spec A/B** | Inbox stage, `capture.ts` + `intake.ts`, `POST /api/capture`, quick-add FAB, `InboxPanel`, setup.md §8 (Siri). |
+| **Beyond plan** | Project-backlog connector and the GitHub PRs/issues panel — both requested mid-implementation. |
+
+### Where the plan was wrong, and what the data said
+
+1. **`~/.claude/stats-cache.json` does not exist** on this machine, despite
+   1,673 session logs. Spec D assumed it would. The probe ships and
+   degrades honestly; cap-% is simply unavailable until a Claude Code
+   build writes that file.
+2. **`codex` is not on PATH.** This user drives Codex through the desktop
+   app and the VS Code extension (`originator: "Codex Desktop"`,
+   `source: "vscode"` in the rollout metadata), so `codex app-server`
+   can't be spawned. Same honest degradation.
+3. **Codex usage *does* split by model.** The plan said "Codex: static".
+   `turn_context` carries `payload.model` (`gpt-5.6-sol`, `gpt-5.5`) and
+   `payload.cwd`, and precedes the `token_count` events it configures —
+   so there's a real model mix and real project attribution.
+4. **Archived Codex sessions can't be deduped by relative path.** The
+   plan assumed the archive mirrors the date tree; it's flat, so a moved
+   rollout has a different relative path in each root. The session UUID
+   embedded in the filename is the only thing that survives the move.
+5. **The dash collision is worse than "ambiguous" — it's actively
+   wrong.** A real directory here decodes to a project called "Robotics";
+   the session's own `cwd` says "Robotics Leadership". We never decode.
+6. **A `Co-Authored-By` trailer does not imply AI.** Human co-author
+   trailers are common in these repos. The `noreply@` **domain** is the
+   discriminator; matching on the name would have inflated the AI share
+   with the user's own commits.
+7. **Local git beats the GitHub API for EP-11.** Attribution needs full
+   message bodies, which `gh search commits` doesn't reliably return —
+   the API path would have yielded no model breakdown at all.
+8. **The first usage collect blocked for 83 seconds** (270 large session
+   logs, all recent enough that the mtime pre-filter can't skip any).
+   `/api/usage` now collects in the background and reports `collecting`.
+
+### Known data problem in the user's DB
+
+The `projects` table holds **stale paths** — rows point at
+`~/Documents/Projects/...` while the real location is `~/Projects/...`.
+The project-backlog connector reports this explicitly rather than
+claiming "no backlog file". Re-importing from `/discover` fixes it.
+
+### Still open (plan §8 product calls)
+
+Unchanged: GitHub reopen↔DB reopen bidirectionality, the tracker repo
+name, digest time/channel, the `read:user` scope, and the idea
+auto-archive window.

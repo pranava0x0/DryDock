@@ -6,8 +6,7 @@ Per universal CLAUDE.md: every bug encounter and fix gets logged here. Active ta
 
 | ID | Date | Area | Description | Severity | Size | Cause | Status |
 |---|---|---|---|---|---|---|---|
-
-_None open._
+| DD-017 | 2026-07-26 | data | Every row in the `projects` table points at `~/Documents/Projects/<name>`, but the projects actually live at `~/Projects/<name>`. So every path-reading feature sees nothing: the new project-backlog connector reported "no backlog file" for all 20 projects, including ones that plainly have one. Almost certainly from an import run when `DRYDOCK_PROJECTS_ROOT` was set differently. | P2 | S | Stale rows, not a code defect — but it silently disables anything that reads a project's files | Open — re-import from `/discover`, or `UPDATE projects SET path = REPLACE(path, '/Documents/Projects/', '/Projects/')`. The connector now distinguishes "no backlog file" from "project path no longer exists" so this can't hide again. |
 
 ## Resolved Summary
 
