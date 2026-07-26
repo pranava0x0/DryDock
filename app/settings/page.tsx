@@ -12,6 +12,7 @@ import {
 import type { ProviderName } from "@/lib/providers/types";
 import { SubscriptionEditor } from "@/components/SubscriptionEditor";
 import { InlineDisclosure } from "@/components/Disclosure";
+import { BacklogMirror } from "@/components/BacklogMirror";
 
 // Idle-backoff knobs for the Claude budget refresh. baseMs lines up with
 // the throttle gate's 1/min cap (so a backoff fire never gets blocked at
@@ -1080,6 +1081,8 @@ export default function SettingsPage() {
             </ul>
             <SubscriptionEditor />
           </div>
+
+          <BacklogMirror />
         </div>
       )}
     </section>

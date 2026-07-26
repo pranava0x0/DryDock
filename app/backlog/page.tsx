@@ -479,6 +479,18 @@ export default function BacklogPage() {
                             task ↗
                           </Link>
                         ) : null}
+                        {/* The whole visible cost of the GitHub mirror:
+                            one link out per row. */}
+                        {item.github_issue_ref ? (
+                          <a
+                            href={`https://github.com/${item.github_issue_ref.replace("#", "/issues/")}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-kraken-ice underline-offset-2 hover:underline"
+                          >
+                            {item.github_issue_ref.split("/").pop()} ↗
+                          </a>
+                        ) : null}
                       </div>
                     </>
                   )}
