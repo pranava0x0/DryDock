@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetDbForTests, getDb } from "./index";
 import {
+  distinctSessionDays,
   emptyUsageRow,
   latestUsageDay,
   listUsageDaily,
@@ -175,5 +176,57 @@ describe("usage ledger", () => {
     expect(() =>
       usageBy("day; DROP TABLE usage_daily" as never),
     ).toThrow(/unsupported dimension/);
+  });
+});
+
+describe("session counting (Codex P2, PR #8)", () => {
+  it("does NOT double-count a session that used two models on one day", () => {
+    // The ledger's grain puts `sessions` on every row, so one session
+    // spanning two models is stored as 1 twice. Summing reported 2, and
+    // the Usage tab rendered that as "SESSIONS".
+    upsertUsageDaily([
+      row("2026-07-20", { model: "claude-opus-4-8", sessions: 1 }),
+      row("2026-07-20", { model: "claude-sonnet-5", sessions: 1 }),
+    ]);
+    expect(usageTotals().sessions).toBe(2); // the raw sum, still available
+    expect(distinctSessionDays()).toBe(1); // what a human should be shown
+  });
+
+  it("adds up across days and providers", () => {
+    upsertUsageDaily([
+      row("2026-07-20", { sessions: 2 }),
+      row("2026-07-21", { sessions: 3 }),
+      row("2026-07-21", { provider: "codex", model: "gpt-5.6-sol", sessions: 1 }),
+    ]);
+    // 2 (Mon claude) + 3 (Tue claude) + 1 (Tue codex).
+    expect(distinctSessionDays()).toBe(6);
+  });
+
+  it("respects the query filters", () => {
+    upsertUsageDaily([
+      row("2026-07-20", { sessions: 2 }),
+      row("2026-07-25", { sessions: 5 }),
+    ]);
+    expect(distinctSessionDays({ toDay: "2026-07-21" })).toBe(2);
+    expect(distinctSessionDays({ provider: "codex" })).toBe(0);
+  });
+
+  it("is zero, not a crash, on an empty ledger", () => {
+    expect(distinctSessionDays()).toBe(0);
+  });
+});
+
+describe("cache writes are priced separately (Codex P2, PR #8)", () => {
+  it("keeps reads and writes in distinct columns", () => {
+    // A cache READ costs ~10% of input; a cache WRITE costs ~25% MORE.
+    // Merging them and pricing at the read rate understated every long
+    // session's API-equivalent value.
+    upsertUsageDaily([
+      row("2026-07-20", { cached_tokens: 1000, cache_write_tokens: 500 }),
+    ]);
+    const [stored] = listUsageDaily();
+    expect(stored.cached_tokens).toBe(1000);
+    expect(stored.cache_write_tokens).toBe(500);
+    expect(usageTotals().cache_write_tokens).toBe(500);
   });
 });

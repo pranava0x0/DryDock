@@ -14,17 +14,28 @@ import { dayKeyOffset, localDayKey } from "../util/day";
 /**
  * The DryDock MCP tool surface (EP-14 Spec A).
  *
- * ── `dispatch_task` is deliberately absent ──────────────────────────────
- * The primary consumer of this server is the nightly idea-generation
- * session, which reads untrusted web content. Giving that session the
- * ability to dispatch an agent would complete the lethal trifecta:
- * untrusted input + private data + a way to act. So the most a hostile
- * page can achieve through this surface is **proposing a backlog item**,
- * which lands in the inbox and is swept with one tap.
+ * ── The tool set is per-caller, not global ──────────────────────────────
+ * The nightly idea-generation session reads untrusted web content. An
+ * earlier cut of this file withheld `dispatch_task` and exposed
+ * everything else to every caller — which was **not enough**, and Codex
+ * was right to say so on PR #8.
  *
- * `burn_down_item` is the boundary case and is included, because it
- * creates a *pending* task that a human still has to run — that's the
- * safety line the UI already draws, not a new one.
+ * The lethal trifecta is untrusted input + access to private data + a way
+ * to exfiltrate or act. Withholding dispatch removes one exfiltration
+ * route, but `list_backlog`, `list_tasks`, and `get_usage_stats` pull
+ * private local state *into the context of a session that is already
+ * reading attacker-controlled pages* — and that session has its own web
+ * access to send it back out. `burn_down_item` is worse still: it mutates,
+ * moving an accepted item to `in_progress` and creating a task.
+ *
+ * So the surface is now an explicit **allowlist per caller identity**:
+ * the ideas session gets `add_backlog_item` and nothing else. Its entire
+ * blast radius really is "propose spam into the inbox", which is what the
+ * plan claimed all along and what the code now actually delivers.
+ *
+ * `burn_down_item` stays available to a *human-driven* session, where it
+ * creates a **pending** task a person still has to run — the safety line
+ * the UI already draws.
  *
  * ── Talks to the DB directly, not over HTTP ─────────────────────────────
  * These tools import `lib/db/*` in-process. A 7am briefing job must not
@@ -45,6 +56,30 @@ export interface ToolDefinition {
 /** Callers can't claim to be something else — see `add_backlog_item`. */
 export type CallerIdentity = "ai-generated" | "manual";
 
+/**
+ * Which tools each caller identity may see.
+ *
+ * Deliberately an **allowlist**, not a denylist. A denylist has to be
+ * updated every time a tool is added, and forgetting is silent — a new
+ * read tool would quietly become reachable from a session that reads
+ * hostile web pages. With an allowlist, forgetting means the new tool
+ * is simply unavailable until someone states that it should be.
+ */
+export const TOOLS_BY_CALLER: Record<CallerIdentity, readonly string[]> = {
+  // Reads untrusted web content. Propose-only: no reads of private
+  // local state, no mutations.
+  "ai-generated": ["add_backlog_item"],
+  // A human is driving. Read + propose + create-a-pending-task.
+  manual: [
+    "add_backlog_item",
+    "list_backlog",
+    "list_tasks",
+    "get_task_status",
+    "get_usage_stats",
+    "burn_down_item",
+  ],
+};
+
 function str(args: Record<string, unknown>, key: string): string | null {
   const value = args[key];
   return typeof value === "string" && value.trim().length > 0
@@ -53,6 +88,11 @@ function str(args: Record<string, unknown>, key: string): string | null {
 }
 
 export function buildTools(caller: CallerIdentity): ToolDefinition[] {
+  const allowed = new Set(TOOLS_BY_CALLER[caller] ?? []);
+  return allTools(caller).filter((tool) => allowed.has(tool.name));
+}
+
+function allTools(caller: CallerIdentity): ToolDefinition[] {
   return [
     {
       name: "add_backlog_item",
@@ -336,14 +376,27 @@ export function buildTools(caller: CallerIdentity): ToolDefinition[] {
 }
 
 /**
- * Tools a content-consuming session must never see. Kept as an explicit
- * list so the omission is a stated decision rather than something that
- * happens to be missing — and so a future "just add dispatch" reads as
- * the deliberate reversal it would be.
+ * Operations that exist nowhere in this surface, for any caller. Kept as
+ * an explicit list so the omission reads as a stated decision rather than
+ * something that happens to be missing — and so a future "just add
+ * dispatch" reads as the deliberate reversal it would be.
  */
 export const WITHHELD_TOOLS = [
   "dispatch_task",
   "run_task",
   "delete_backlog_item",
   "update_settings",
+] as const;
+
+/**
+ * Additionally withheld from the untrusted (`ai-generated`) caller.
+ * Every one of these either reads private local state into a
+ * web-reading context or mutates orchestrator state.
+ */
+export const WITHHELD_FROM_UNTRUSTED = [
+  "list_backlog",
+  "list_tasks",
+  "get_task_status",
+  "get_usage_stats",
+  "burn_down_item",
 ] as const;

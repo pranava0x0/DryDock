@@ -40,7 +40,10 @@ export interface UsageDailyRow {
   model: string;
   project_key: string;
   input_tokens: number;
+  /** Cache reads — cheap. */
   cached_tokens: number;
+  /** Cache writes — dearer than input. Never merge with reads. */
+  cache_write_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;
   total_tokens: number;
@@ -50,8 +53,8 @@ export interface UsageDailyRow {
 }
 
 const COLUMNS = `day, provider, surface, model, project_key,
-  input_tokens, cached_tokens, output_tokens, reasoning_tokens,
-  total_tokens, sessions, turns, events`;
+  input_tokens, cached_tokens, cache_write_tokens, output_tokens,
+  reasoning_tokens, total_tokens, sessions, turns, events`;
 
 /** A zeroed row, so accumulators never have to spell out 8 zeros. */
 export function emptyUsageRow(
@@ -69,6 +72,7 @@ export function emptyUsageRow(
     project_key: projectKey,
     input_tokens: 0,
     cached_tokens: 0,
+    cache_write_tokens: 0,
     output_tokens: 0,
     reasoning_tokens: 0,
     total_tokens: 0,
@@ -82,12 +86,13 @@ function insertStatement() {
   return getDb().prepare(
     `INSERT INTO usage_daily (${COLUMNS}, updated_at)
      VALUES (@day, @provider, @surface, @model, @project_key,
-             @input_tokens, @cached_tokens, @output_tokens,
-             @reasoning_tokens, @total_tokens, @sessions, @turns,
-             @events, unixepoch())
+             @input_tokens, @cached_tokens, @cache_write_tokens,
+             @output_tokens, @reasoning_tokens, @total_tokens, @sessions,
+             @turns, @events, unixepoch())
      ON CONFLICT(day, provider, surface, model, project_key) DO UPDATE SET
        input_tokens = excluded.input_tokens,
        cached_tokens = excluded.cached_tokens,
+       cache_write_tokens = excluded.cache_write_tokens,
        output_tokens = excluded.output_tokens,
        reasoning_tokens = excluded.reasoning_tokens,
        total_tokens = excluded.total_tokens,
@@ -183,15 +188,19 @@ export function listUsageDaily(q: UsageQuery = {}): UsageDailyRow[] {
 export interface UsageTotals {
   input_tokens: number;
   cached_tokens: number;
+  cache_write_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;
   total_tokens: number;
   turns: number;
   events: number;
   /**
-   * Distinct (day, session-count) is not summable across days without
-   * over-counting a session that spans midnight, so this is "session
-   * starts observed per day, summed" — labelled as such wherever shown.
+   * **Do not render this as a session count.** It is the sum of a
+   * per-dimension counter, so a session that used two models on one day
+   * contributes 2 — the Claude scanner explicitly produces that case.
+   * Use `distinctSessionDays()` for a figure a human will read.
+   * Retained because it is still the right denominator for per-dimension
+   * ratios, where both sides are counted the same way.
    */
   sessions: number;
   days: number;
@@ -199,6 +208,7 @@ export interface UsageTotals {
 
 const SUMS = `COALESCE(SUM(input_tokens),0)     AS input_tokens,
   COALESCE(SUM(cached_tokens),0)    AS cached_tokens,
+  COALESCE(SUM(cache_write_tokens),0) AS cache_write_tokens,
   COALESCE(SUM(output_tokens),0)    AS output_tokens,
   COALESCE(SUM(reasoning_tokens),0) AS reasoning_tokens,
   COALESCE(SUM(total_tokens),0)     AS total_tokens,
@@ -216,6 +226,7 @@ export function usageTotals(q: UsageQuery = {}): UsageTotals {
     row ?? {
       input_tokens: 0,
       cached_tokens: 0,
+      cache_write_tokens: 0,
       output_tokens: 0,
       reasoning_tokens: 0,
       total_tokens: 0,
@@ -225,6 +236,40 @@ export function usageTotals(q: UsageQuery = {}): UsageTotals {
       days: 0,
     }
   );
+}
+
+/**
+ * Session-days, counted once per (day, provider) rather than summed
+ * across ledger rows.
+ *
+ * The ledger's grain is (day × provider × surface × model × project), and
+ * `sessions` lives on every row — so a session that touched two models on
+ * one day is stored as 1 twice, and `SUM(sessions)` reports 2. The Usage
+ * tab was rendering that sum as "SESSIONS", which over-counted every
+ * multi-model day (Codex caught this on PR #8).
+ *
+ * Taking the MAX within a (day, provider) is the right reduction: every
+ * row for that day carries a count of the sessions that contributed to
+ * *its* slice, so the largest is the closest available lower bound on
+ * how many distinct sessions the day actually had. It cannot exceed the
+ * truth, which is the direction to err in.
+ *
+ * Exact per-session identity is available from `ai_sessions` once EP-11's
+ * session store lands; until then this is the honest approximation and
+ * is labelled "conversations" rather than a precise count.
+ */
+export function distinctSessionDays(q: UsageQuery = {}): number {
+  const { clause, params } = whereFor(q);
+  const row = getDb()
+    .prepare(
+      `SELECT COALESCE(SUM(per_day), 0) AS n FROM (
+         SELECT MAX(sessions) AS per_day
+           FROM usage_daily ${clause}
+          GROUP BY day, provider
+       )`,
+    )
+    .get(...params) as { n: number } | undefined;
+  return row?.n ?? 0;
 }
 
 export type UsageDimension = "day" | "model" | "project_key" | "provider";

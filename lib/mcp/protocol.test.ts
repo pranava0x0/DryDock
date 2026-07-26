@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { _resetDbForTests, getDb } from "../db/index";
 import { createBacklogItem, listBacklog, triageBacklogItem } from "../db/backlog";
 import { handleMessage, parseRequest, PROTOCOL_VERSION } from "./protocol";
-import { buildTools, WITHHELD_TOOLS } from "./tools";
+import {
+  buildTools,
+  WITHHELD_FROM_UNTRUSTED,
+  WITHHELD_TOOLS,
+} from "./tools";
 
 const INFO = { name: "drydock", version: "0.1.0" };
 
@@ -73,19 +77,28 @@ describe("protocol", () => {
   it("lists tools with their schemas", async () => {
     const res = await handleMessage(
       { jsonrpc: "2.0", id: 2, method: "tools/list" },
-      tools(),
+      tools("manual"),
       INFO,
     );
-    const listed = (res?.result as { tools: Array<{ name: string }> }).tools;
-    const names = listed.map((t) => t.name);
-    expect(names).toContain("add_backlog_item");
-    expect(names).toContain("get_usage_stats");
+    const listed = (
+      res?.result as {
+        tools: Array<{ name: string; inputSchema: unknown }>;
+      }
+    ).tools;
+    expect(listed.map((t) => t.name)).toContain("get_usage_stats");
+    // Every tool advertises a schema; a model can't call what it can't
+    // see the shape of.
+    expect(listed.every((t) => typeof t.inputSchema === "object")).toBe(true);
   });
 
-  it("NEVER exposes dispatch to a content-consuming session", async () => {
-    // The lethal trifecta guard. The idea-generation session reads
-    // untrusted web content; the most a hostile page may achieve through
-    // this surface is proposing an inbox item.
+  it("gives a content-consuming session PROPOSE-ONLY, nothing else", async () => {
+    // The lethal-trifecta guard, tightened after Codex's P1 on PR #8.
+    // Withholding `dispatch_task` alone was not enough: `list_backlog`,
+    // `list_tasks`, and `get_usage_stats` pull private local state into
+    // the context of a session that is already reading attacker-
+    // controlled pages and has its own web access to send it back out.
+    // `burn_down_item` additionally mutates. The ideas session gets
+    // exactly one tool.
     const res = await handleMessage(
       { jsonrpc: "2.0", id: 3, method: "tools/list" },
       tools("ai-generated"),
@@ -94,6 +107,41 @@ describe("protocol", () => {
     const names = (res?.result as { tools: Array<{ name: string }> }).tools.map(
       (t) => t.name,
     );
+    expect(names).toEqual(["add_backlog_item"]);
+    for (const withheld of [...WITHHELD_TOOLS, ...WITHHELD_FROM_UNTRUSTED]) {
+      expect(names).not.toContain(withheld);
+    }
+  });
+
+  it("refuses to CALL a tool the caller isn't allowed, not just hide it", async () => {
+    // Hiding a tool from tools/list is cosmetic if the call still works —
+    // a model that learned the name elsewhere would sail straight
+    // through. The allowlist has to gate dispatch, not just discovery.
+    const res = await handleMessage(
+      {
+        jsonrpc: "2.0",
+        id: 31,
+        method: "tools/call",
+        params: { name: "list_backlog", arguments: {} },
+      },
+      tools("ai-generated"),
+      INFO,
+    );
+    expect(res?.error?.code).toBe(-32602);
+  });
+
+  it("still gives a human-driven session the read tools", async () => {
+    const res = await handleMessage(
+      { jsonrpc: "2.0", id: 32, method: "tools/list" },
+      tools("manual"),
+      INFO,
+    );
+    const names = (res?.result as { tools: Array<{ name: string }> }).tools.map(
+      (t) => t.name,
+    );
+    expect(names).toContain("list_backlog");
+    expect(names).toContain("get_usage_stats");
+    expect(names).toContain("burn_down_item");
     for (const withheld of WITHHELD_TOOLS) {
       expect(names).not.toContain(withheld);
     }
@@ -197,7 +245,7 @@ describe("tools", () => {
     triageBacklogItem(accepted.id);
     createBacklogItem({ title: "captured", source: "shortcut" });
 
-    const res = await call("list_backlog");
+    const res = await call("list_backlog", {}, "manual");
     expect(res.data.count).toBe(1);
     expect(res.data.items[0].title).toBe("accepted");
     expect(res.data.inbox_count).toBe(1);
@@ -207,7 +255,7 @@ describe("tools", () => {
     // Letting a machine burn down an unaccepted item would route around
     // the inbox entirely.
     const item = createBacklogItem({ title: "untriaged", source: "shortcut" });
-    const res = await call("burn_down_item", { id: item.id });
+    const res = await call("burn_down_item", { id: item.id }, "manual");
     expect(res.data.ok).toBe(false);
     expect(res.data.reason).toContain("inbox");
   });
@@ -215,20 +263,20 @@ describe("tools", () => {
   it("burn_down_item creates a PENDING task a human still has to run", async () => {
     const item = createBacklogItem({ title: "accepted", source: "manual" });
     triageBacklogItem(item.id);
-    const res = await call("burn_down_item", { id: item.id });
+    const res = await call("burn_down_item", { id: item.id }, "manual");
     // No project assigned, so it reports why rather than throwing.
     expect(res.data.ok).toBe(false);
     expect(res.data.code).toBe("project_required");
   });
 
   it("get_usage_stats says Google is activity, not tokens", async () => {
-    const res = await call("get_usage_stats", { days: 7 });
+    const res = await call("get_usage_stats", { days: 7 }, "manual");
     expect(res.data.window_days).toBe(7);
     expect(res.data.note).toContain("no token counts");
   });
 
   it("list_tasks reports an unknown status instead of matching nothing", async () => {
-    const res = await call("list_tasks", { status: "bogus" });
+    const res = await call("list_tasks", { status: "bogus" }, "manual");
     expect(res.data.error).toContain("unknown status");
   });
 });

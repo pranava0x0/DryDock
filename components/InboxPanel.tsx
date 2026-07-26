@@ -216,7 +216,7 @@ export function InboxPanel({
                     type="button"
                     onClick={() => void accept(item)}
                     disabled={busy === item.id}
-                    className="min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50"
+                    className="tap rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50"
                   >
                     Accept
                   </button>
@@ -225,7 +225,7 @@ export function InboxPanel({
                     onChange={(e) => void assign(item, e.target.value)}
                     disabled={busy === item.id}
                     aria-label={`Assign project for ${item.title}`}
-                    className="min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-2 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                    className="tap rounded-md border border-kraken-boundless bg-kraken-deep px-2 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
                   >
                     <option value="">Unassigned</option>
                     {projects.map((p) => (
@@ -240,7 +240,7 @@ export function InboxPanel({
                     disabled={busy === item.id}
                     aria-label={`Discard ${item.title}`}
                     title="Discard — this never reached the backlog or the Note."
-                    className="ml-auto min-h-[36px] rounded-md px-2 text-base text-zinc-500 transition hover:text-kraken-alert"
+                    className="ml-auto tap rounded-md px-2 text-base text-zinc-500 transition hover:text-kraken-alert"
                   >
                     🗑️
                   </button>

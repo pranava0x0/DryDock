@@ -272,7 +272,7 @@ export default function BacklogPage() {
     <>
       <Link
         href="/"
-        className="text-sm text-zinc-400 transition hover:text-zinc-200"
+        className="tap inline-flex items-center text-sm text-zinc-400 transition hover:text-zinc-200"
       >
         ← Back to projects
       </Link>
@@ -331,7 +331,7 @@ export default function BacklogPage() {
           the common case, and two always-visible add controls on one
           screen is a choice the user has to make before they can type. */}
       <details className="group mb-3 [&_summary::-webkit-details-marker]:hidden">
-        <summary className="inline-flex min-h-[36px] cursor-pointer list-none items-center gap-1 text-xs text-kraken-ice underline-offset-2 hover:underline">
+        <summary className="inline-flex tap cursor-pointer list-none items-center gap-1 text-xs text-kraken-ice underline-offset-2 hover:underline">
           <span
             aria-hidden="true"
             className="text-[9px] transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none"
@@ -395,7 +395,7 @@ export default function BacklogPage() {
             key={s}
             type="button"
             onClick={() => setFilter(s)}
-            className={`min-h-[36px] rounded-full px-3 text-xs font-medium transition ${
+            className={`tap rounded-full px-3 text-xs font-medium transition ${
               filter === s
                 ? "bg-kraken-ice text-kraken-deep"
                 : "border border-kraken-boundless text-zinc-300 hover:bg-kraken-boundless/30"
@@ -504,7 +504,7 @@ export default function BacklogPage() {
                       type="button"
                       onClick={() => void saveEdit(item)}
                       disabled={busy || editTitle.trim() === ""}
-                      className="min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="tap rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Save
                     </button>
@@ -512,7 +512,7 @@ export default function BacklogPage() {
                       type="button"
                       onClick={cancelEdit}
                       disabled={busy}
-                      className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
+                      className="tap rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
                     >
                       Cancel
                     </button>
@@ -523,7 +523,7 @@ export default function BacklogPage() {
                       value={item.project_id ?? ""}
                       onChange={(e) => handleAssign(item, e.target.value)}
                       disabled={busy}
-                      className="min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-2 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                      className="tap rounded-md border border-kraken-boundless bg-kraken-deep px-2 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
                       aria-label="Assign project"
                     >
                       <option value="">Unassigned</option>
@@ -543,7 +543,7 @@ export default function BacklogPage() {
                             ? "Create a task in the assigned project"
                             : "Assign a project first"
                         }
-                        className="min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="tap rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         🔥 Burn down
                       </button>
@@ -553,7 +553,7 @@ export default function BacklogPage() {
                         type="button"
                         onClick={() => handleStatus(item, "done")}
                         disabled={busy}
-                        className="min-h-[36px] rounded-md border border-emerald-500/40 px-3 text-xs text-emerald-300 transition hover:bg-emerald-500/10"
+                        className="tap rounded-md border border-emerald-500/40 px-3 text-xs text-emerald-300 transition hover:bg-emerald-500/10"
                       >
                         Mark done
                       </button>
@@ -562,7 +562,7 @@ export default function BacklogPage() {
                       type="button"
                       onClick={() => startEdit(item)}
                       disabled={busy}
-                      className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
+                      className="tap rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
                       aria-label="Edit item"
                     >
                       ✏️ Edit
@@ -571,7 +571,7 @@ export default function BacklogPage() {
                       type="button"
                       onClick={() => handleDelete(item)}
                       disabled={busy}
-                      className="ml-auto min-h-[36px] rounded-md px-2 text-base text-zinc-500 transition hover:text-kraken-alert"
+                      className="ml-auto tap rounded-md px-2 text-base text-zinc-500 transition hover:text-kraken-alert"
                       aria-label="Delete item"
                       title="Delete this item permanently."
                     >

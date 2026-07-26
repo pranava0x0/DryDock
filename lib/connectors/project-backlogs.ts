@@ -1,8 +1,11 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import { listProjects, type Project } from "../db/projects";
+import {
+  getBacklogItemByExternalId,
+  updateBacklogItem,
+} from "../db/backlog";
 import { intakeCapture } from "../orchestrator/intake";
-import { slugify } from "../orchestrator/capture";
 
 /**
  * Pull each project's **own** backlog file into DryDock's inbox.
@@ -45,13 +48,25 @@ export interface ProjectBacklogItem {
   done: boolean;
   /** Section heading the line sat under, when there was one. */
   section: string | null;
+  /**
+   * 0-based position among the file's parsed items. This is the row's
+   * stable identity — a title can be reworded, a position usually can't.
+   */
+  ordinal: number;
 }
 
 export interface ProjectBacklogScan {
   projectId: string;
   projectName: string;
   file: string | null;
+  /** Open items, capped. These create or refresh inbox rows. */
   items: ProjectBacklogItem[];
+  /**
+   * Items already checked off in the source file. Never create a row —
+   * they exist so a row imported while the line was open can be closed
+   * when the line is later ticked.
+   */
+  completed: ProjectBacklogItem[];
   /** Items beyond MAX_ITEMS_PER_PROJECT that were NOT imported. */
   skipped: number;
   reason: string | null;
@@ -91,7 +106,7 @@ export function parseBacklogMarkdown(content: string): ProjectBacklogItem[] {
 
     const table = parseTableRow(line);
     if (table) {
-      items.push({ ...table, section });
+      items.push({ ...table, section, ordinal: items.length });
       continue;
     }
 
@@ -114,7 +129,7 @@ export function parseBacklogMarkdown(content: string): ProjectBacklogItem[] {
 
     text = stripMarkdown(text);
     if (text.length === 0) continue;
-    items.push({ title: text, done, section });
+    items.push({ title: text, done, section, ordinal: items.length });
   }
 
   return items;
@@ -164,6 +179,7 @@ export async function scanProjectBacklog(
     projectName: project.name,
     file: null,
     items: [],
+    completed: [],
     skipped: 0,
     reason: null,
   };
@@ -196,13 +212,17 @@ export async function scanProjectBacklog(
       continue;
     }
     const parsed = parseBacklogMarkdown(content);
-    // Done items are read (so a re-import can't resurrect them) but not
-    // imported — the inbox is for things that still need deciding.
     const open = parsed.filter((i) => !i.done);
     return {
       ...base,
       file: filename,
       items: open.slice(0, MAX_ITEMS_PER_PROJECT),
+      // Completed entries are carried separately, NOT dropped. Filtering
+      // them out entirely meant that ticking a line in the source file
+      // left its already-imported DryDock row actionable forever — the
+      // import loop simply never saw it again (Codex, PR #8). They're
+      // used to close existing rows, never to create new ones.
+      completed: parsed.filter((i) => i.done),
       skipped: Math.max(0, open.length - MAX_ITEMS_PER_PROJECT),
       reason: null,
     };
@@ -218,6 +238,8 @@ export interface ProjectBacklogImport {
   created: number;
   updated: number;
   duplicates: number;
+  /** Rows closed because their source line is now ticked. */
+  completed: number;
   skipped: number;
   reason: string | null;
 }
@@ -242,6 +264,7 @@ export async function importProjectBacklogs(): Promise<ProjectBacklogImport[]> {
       created: 0,
       updated: 0,
       duplicates: 0,
+      completed: 0,
       skipped: scan.skipped,
       reason: scan.reason,
     };
@@ -250,7 +273,15 @@ export async function importProjectBacklogs(): Promise<ProjectBacklogImport[]> {
       const result = intakeCapture({
         text: item.title,
         source: "project-file",
-        externalId: `projfile:${project.id}:${slugify(item.title)}`,
+        // Identity is (project, file, ordinal) — NOT the title slug.
+        // A slug changes the moment the line is edited, so the next
+        // import couldn't find the old row: it created a second one and
+        // left the stale title behind, contradicting the connector's own
+        // update semantics (Codex, PR #8). Position is stable across a
+        // rewording, which is the common edit; a reorder re-links rows to
+        // each other's lines, which is why the description carries the
+        // source file and section so a mismatch is visible.
+        externalId: `projfile:${project.id}:${scan.file}:${item.ordinal}`,
         // The project is known from the file's location — far more
         // reliable than a `#marker`, so it overrides the parsed one.
         projectId: project.id,
@@ -261,6 +292,20 @@ export async function importProjectBacklogs(): Promise<ProjectBacklogImport[]> {
       if (result.outcome === "created") outcome.created += 1;
       else if (result.outcome === "updated") outcome.updated += 1;
       else outcome.duplicates += 1;
+    }
+
+    // Reconcile completions: a line that is now ticked in the source file
+    // closes the row it created, rather than leaving it actionable
+    // forever. Only ever touches a row this connector already made —
+    // `getBacklogItemByExternalId` keyed on the projfile namespace — so
+    // it can't reach anything the user entered by hand.
+    for (const item of scan.completed) {
+      const existing = getBacklogItemByExternalId(
+        `projfile:${project.id}:${scan.file}:${item.ordinal}`,
+      );
+      if (!existing || existing.status === "done") continue;
+      updateBacklogItem(existing.id, { status: "done" });
+      outcome.completed += 1;
     }
 
     results.push(outcome);

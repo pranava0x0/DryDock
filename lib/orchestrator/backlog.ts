@@ -299,11 +299,22 @@ export function applyPulledLines(
     // Title-claim: a pre-existing manual row with no external_id yet
     // (created before POST started stamping lineId). Promote it in
     // place rather than minting a duplicate.
+    //
+    // **Triage the row while claiming it.** A capture without an
+    // idempotency key also has a null external_id, so an inbox row could
+    // be claimed here — and since the push renders triaged rows only,
+    // the very next write would DELETE that line from the Note instead
+    // of adopting it (Codex, PR #8). A line that is present in the Note
+    // is, by definition, in the user's trusted list; claiming it and
+    // stamping `triaged_at` is the state that makes both surfaces agree.
     const sameTitle = getBacklogItemByTitle(line.text);
     if (sameTitle && sameTitle.external_id === null) {
       updateBacklogItem(sameTitle.id, {
         external_id: line.externalId,
         source: "apple-notes",
+        ...(sameTitle.triaged_at === null
+          ? { triaged_at: Math.floor(Date.now() / 1000) }
+          : {}),
         ...(line.done && sameTitle.status !== "done"
           ? { status: "done" }
           : {}),

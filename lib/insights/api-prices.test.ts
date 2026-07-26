@@ -93,3 +93,58 @@ describe("estimateApiValue", () => {
     expect(est.usd).toBeCloseTo(15, 2);
   });
 });
+
+describe("cache writes vs cache reads (Codex P2, PR #8)", () => {
+  it("prices a cache WRITE above input, not at the read discount", () => {
+    // The bug: writes were merged into `cached_tokens` and priced at
+    // `cacheReadPerMTok`, understating every long Claude Code session —
+    // exactly the sessions that build the most cache.
+    const asWrite = estimateApiValue([
+      {
+        model: "claude-sonnet",
+        input_tokens: 0,
+        cached_tokens: 0,
+        cache_write_tokens: 1_000_000,
+        output_tokens: 0,
+      },
+    ]);
+    const asRead = estimateApiValue([
+      {
+        model: "claude-sonnet",
+        input_tokens: 0,
+        cached_tokens: 1_000_000,
+        output_tokens: 0,
+      },
+    ]);
+    expect(asWrite.usd).toBeCloseTo(3.75, 2);
+    expect(asRead.usd).toBeCloseTo(0.3, 2);
+    // The whole point: writes are more than an order of magnitude dearer.
+    expect(asWrite.usd).toBeGreaterThan(asRead.usd * 10);
+  });
+
+  it("counts cache writes toward priced tokens and coverage", () => {
+    const est = estimateApiValue([
+      {
+        model: "claude-sonnet",
+        input_tokens: 0,
+        cached_tokens: 0,
+        cache_write_tokens: 500_000,
+        output_tokens: 0,
+      },
+    ]);
+    expect(est.pricedTokens).toBe(500_000);
+    expect(est.coverage).toBe(1);
+  });
+
+  it("treats an absent cache_write_tokens as zero, not NaN", () => {
+    const est = estimateApiValue([
+      {
+        model: "claude-sonnet",
+        input_tokens: 1_000_000,
+        cached_tokens: 0,
+        output_tokens: 0,
+      },
+    ]);
+    expect(est.usd).toBeCloseTo(3, 2);
+  });
+});

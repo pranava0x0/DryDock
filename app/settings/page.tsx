@@ -616,7 +616,7 @@ function RoutingRulesSection() {
               type="button"
               onClick={() => void saveRules(rules)}
               disabled={saving}
-              className="mt-3 inline-flex min-h-[36px] items-center rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50"
+              className="mt-3 inline-flex tap items-center rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50"
             >
               {saving ? "Saving…" : "Save changes"}
             </button>
@@ -626,7 +626,7 @@ function RoutingRulesSection() {
             <button
               type="button"
               onClick={() => setShowAdd(true)}
-              className="mt-3 inline-flex min-h-[36px] items-center rounded-md border border-kraken-boundless px-3 text-xs font-medium text-zinc-300 transition hover:bg-kraken-boundless/30"
+              className="mt-3 inline-flex tap items-center rounded-md border border-kraken-boundless px-3 text-xs font-medium text-zinc-300 transition hover:bg-kraken-boundless/30"
             >
               + Add rule
             </button>
@@ -639,7 +639,7 @@ function RoutingRulesSection() {
                   value={form.label}
                   onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
                   placeholder="Lint fixes"
-                  className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
+                  className="mt-1 block w-full tap rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
                 />
               </label>
               <label className="block text-xs">
@@ -649,7 +649,7 @@ function RoutingRulesSection() {
                   value={form.pattern}
                   onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
                   placeholder="fix lint"
-                  className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 font-mono text-xs text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
+                  className="mt-1 block w-full tap rounded-md border border-kraken-boundless bg-kraken-deep px-3 font-mono text-xs text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
                 />
               </label>
               <fieldset className="text-xs">
@@ -682,7 +682,7 @@ function RoutingRulesSection() {
                         model: null,
                       }))
                     }
-                    className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                    className="mt-1 block w-full tap rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
                   >
                     <option value="claude">Claude</option>
                     <option value="gemini">Gemini</option>
@@ -696,7 +696,7 @@ function RoutingRulesSection() {
                       onChange={(e) =>
                         setForm((f) => ({ ...f, model: e.target.value || null }))
                       }
-                      className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                      className="mt-1 block w-full tap rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
                     >
                       <option value="">default</option>
                       {CLAUDE_MODELS.map((m) => (
@@ -712,7 +712,7 @@ function RoutingRulesSection() {
                 <button
                   type="button"
                   onClick={() => { setShowAdd(false); setForm(BLANK_FORM); }}
-                  className="flex-1 min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs font-medium text-zinc-300 transition hover:bg-kraken-boundless/30"
+                  className="flex-1 tap rounded-md border border-kraken-boundless px-3 text-xs font-medium text-zinc-300 transition hover:bg-kraken-boundless/30"
                 >
                   Cancel
                 </button>
@@ -720,7 +720,7 @@ function RoutingRulesSection() {
                   type="button"
                   onClick={() => void addRule()}
                   disabled={saving || !form.label.trim() || !form.pattern.trim()}
-                  className="flex-1 min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 tap rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving ? "Adding…" : "Add"}
                 </button>
@@ -909,7 +909,7 @@ export default function SettingsPage() {
         </h1>
         <Link
           href="/"
-          className="text-xs text-kraken-ice underline-offset-2 transition hover:underline"
+          className="tap inline-flex items-center text-xs text-kraken-ice underline-offset-2 transition hover:underline"
         >
           ← Dashboard
         </Link>

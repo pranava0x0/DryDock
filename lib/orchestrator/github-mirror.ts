@@ -5,6 +5,7 @@ import {
 } from "../db/backlog";
 import { listProjects } from "../db/projects";
 import { getSetting, setSetting } from "../db/settings";
+import { intakeCapture } from "./intake";
 import {
   closeIssue,
   createIssue,
@@ -120,10 +121,17 @@ async function runMirrorOnce(): Promise<MirrorStats> {
     reason: null,
   };
 
+  // Reconcile deletions first. `DELETE /api/backlog/[id]` removes the row
+  // and its `github_issue_ref` with it, so a sync that only walks live
+  // rows can never find the orphaned issue — it would stay open forever
+  // in the "durable" mirror (Codex, PR #8). The delete path leaves a
+  // tombstone; this drains it.
   const listed = await listTrackerIssues(repo);
   if (!listed.ok) {
     return { ...stats, status: "unavailable", reason: listed.reason };
   }
+
+  await closeTombstonedIssues(stats);
 
   const projects = new Map(listProjects().map((p) => [p.id, p.name]));
   // Only the trusted list is mirrored. Inbox and machine proposals stay
@@ -137,7 +145,24 @@ async function runMirrorOnce(): Promise<MirrorStats> {
   // reason: an edit made on the far side has to survive the round trip
   // even though the push re-serializes everything.
   await pullFromTracker(items, listed.issues, repo, stats);
-  await pushToTracker(items, listed.issues, repo, projects, stats);
+
+  // RE-READ before pushing. `pullFromTracker` writes to SQLite but the
+  // `items` array is a snapshot taken before it ran, so a reopened issue
+  // would hand the push loop a stale `done` object — which would see an
+  // open issue, decide it should be closed, and immediately undo the
+  // reopen. The bidirectional-reopen rule was silently a no-op (Codex,
+  // PR #8).
+  const refreshed = listBacklog({ stage: "triaged" }).filter(
+    (i) => i.status !== "proposed",
+  );
+  await pushToTracker(refreshed, listed.issues, repo, projects, stats);
+
+  // A write failure anywhere in the push means this was NOT a full round.
+  // Stamping the success timestamp — and reporting `ok` — would have the
+  // Settings panel say "Synced" while issues silently went unwritten.
+  if (stats.reason !== null) {
+    return { ...stats, status: "unavailable" };
+  }
 
   // Only stamp success after both halves completed, so a partial run
   // leaves an honest older timestamp rather than claiming a full round.
@@ -177,7 +202,32 @@ async function pullFromTracker(
       }
     }
 
-    if (!item) continue;
+    // An issue opened directly in the tracker: no ref, no breadcrumb.
+    // Previously skipped, which meant the advertised pull direction never
+    // created anything and `pulledNew` was permanently zero (Codex,
+    // PR #8). Route it through the shared intake path so it gets the same
+    // parsing and dedup as every other feeder.
+    if (!item) {
+      if (issue.state === "CLOSED") continue; // don't resurrect old work
+      const result = intakeCapture({
+        text: issue.title,
+        source: "github",
+        externalId: `github:${ref}`,
+        description: `From ${ref}`,
+      });
+      if (result.item) {
+        updateBacklogItem(result.item.id, {
+          github_issue_ref: ref,
+          // Opening an issue is a deliberate act on a deliberate
+          // surface — same reasoning as an Apple Notes line.
+          triaged_at:
+            result.item.triaged_at ?? Math.floor(Date.now() / 1000),
+        });
+        if (result.outcome === "created") stats.pulledNew += 1;
+        else stats.pulledUpdated += 1;
+      }
+      continue;
+    }
 
     if (issue.state === "CLOSED" && item.status !== "done") {
       updateBacklogItem(item.id, { status: "done" });
@@ -274,6 +324,57 @@ async function pushToTracker(
 }
 
 /** GitHub labels can't contain spaces comfortably; keep them terse. */
+/**
+ * Tombstones for deleted items whose issue is still open.
+ *
+ * Stored in `settings` as a JSON array rather than a table: it is a
+ * transient queue that is normally empty, and a table would be a schema
+ * change plus a migration for something that holds at most a handful of
+ * refs between two syncs.
+ */
+export const TOMBSTONE_KEY = "github_tracker_pending_closes";
+
+export function readTombstones(): string[] {
+  const raw = getSetting(TOMBSTONE_KEY);
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((r): r is string => typeof r === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Record that a deleted item's issue still needs closing. */
+export function addTombstone(ref: string): void {
+  if (!ref) return;
+  const existing = readTombstones();
+  if (existing.includes(ref)) return;
+  setSetting(TOMBSTONE_KEY, JSON.stringify([...existing, ref]));
+}
+
+async function closeTombstonedIssues(stats: MirrorStats): Promise<void> {
+  const pending = readTombstones();
+  if (pending.length === 0) return;
+  const stillPending: string[] = [];
+  for (const ref of pending) {
+    const closed = await closeIssue(
+      ref,
+      "not planned",
+      "Closed by DryDock (item deleted).",
+    );
+    if (closed.ok) stats.closed += 1;
+    else {
+      // Keep it queued — an offline `gh` shouldn't lose the intent.
+      stillPending.push(ref);
+      if (stats.reason === null) stats.reason = closed.reason;
+    }
+  }
+  setSetting(TOMBSTONE_KEY, JSON.stringify(stillPending));
+}
+
 export function slugLabel(value: string): string {
   return value
     .toLowerCase()

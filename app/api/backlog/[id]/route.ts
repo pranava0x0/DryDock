@@ -7,6 +7,7 @@ import {
   updateBacklogItem,
 } from "@/lib/db/backlog";
 import { pushToAppleNotesSilently } from "@/lib/orchestrator/backlog";
+import { addTombstone } from "@/lib/orchestrator/github-mirror";
 import { badRequest, notFound, ok, serverError } from "@/lib/api/json";
 
 export const runtime = "nodejs";
@@ -96,8 +97,17 @@ export async function DELETE(
   ctx: RouteContext,
 ): Promise<Response> {
   const { id } = await ctx.params;
+  // Read the row BEFORE deleting it. Once it's gone so is its
+  // `github_issue_ref`, and the mirror only walks live rows — the
+  // orphaned issue could never be found again and would stay open
+  // forever in the supposedly durable tracker (Codex, PR #8). The
+  // tombstone survives the delete and the next sync drains it.
+  const existing = getBacklogItem(id);
   const deleted = deleteBacklogItem(id);
   if (!deleted) return notFound(`Backlog item not found: ${id}`);
+  if (existing?.github_issue_ref) {
+    addTombstone(existing.github_issue_ref);
+  }
   void pushToAppleNotesSilently();
   return ok({ deleted: true });
 }

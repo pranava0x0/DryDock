@@ -129,7 +129,7 @@ export function FlowTab() {
             key={days}
             type="button"
             onClick={() => setWindowDays(days)}
-            className={`min-h-[36px] rounded-full px-3 text-xs font-medium transition ${
+            className={`tap rounded-full px-3 text-xs font-medium transition ${
               windowDays === days
                 ? "bg-kraken-ice text-kraken-deep"
                 : "border border-kraken-boundless text-zinc-300 hover:bg-kraken-boundless/30"

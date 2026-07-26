@@ -113,7 +113,14 @@ What may be collapsed: rationale, methodology, per-model breakdowns, historical 
 
 ## Touch targets
 
-Every touch-usable interactive element is `min-h-[44px]` (or `h-14 w-14` for the FAB). Non-negotiable on touch — see `CLAUDE.md` "touch targets must be at least 44px." If a future dense desktop-only control ever needs natural scale, keep the 44px floor under `@media (pointer: coarse)` rather than dropping it — don't bloat desktop controls just because the mobile-first rule exists, and don't shrink touch targets to please desktop.
+Every touch-usable interactive element is `min-h-[44px]` (or `h-14 w-14` for the FAB). Non-negotiable on touch — see `CLAUDE.md` "touch targets must be at least 44px."
+
+**Use the `.tap` class for secondary controls**, never a bare `min-h-[36px]`. `.tap` (in [app/globals.css](app/globals.css)) is 36px where there's a mouse and 44px under `@media (pointer: coarse)` — the escape hatch this section always described, now actually implemented. The codebase had drifted to a hardcoded 36px in **28 places**, which silently dropped the floor on phones too; Codex caught it on PR #8.
+
+- **`.tap`** — filter pills, inline row actions, disclosure summaries, back-links, the header budget pill.
+- **`min-h-[44px]` flat** — primary actions, form inputs, anything a thumb aims at deliberately.
+
+Don't bloat desktop controls just because the mobile-first rule exists, and don't shrink touch targets to please desktop. That's the whole point of the two-tier class.
 
 ## Layout breakpoints
 

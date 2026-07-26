@@ -145,7 +145,12 @@ CREATE TABLE IF NOT EXISTS usage_daily (
   -- the session recorded no cwd.
   project_key  TEXT NOT NULL DEFAULT '',
   input_tokens     INTEGER NOT NULL DEFAULT 0,
+  -- Cache READS. Billed at ~10% of input.
   cached_tokens    INTEGER NOT NULL DEFAULT 0,
+  -- Cache WRITES. Billed at a ~25% PREMIUM over input, not a discount —
+  -- so they can't share a column with reads without understating any
+  -- long session's API-equivalent value.
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens    INTEGER NOT NULL DEFAULT 0,
   reasoning_tokens INTEGER NOT NULL DEFAULT 0,  -- codex only today
   total_tokens     INTEGER NOT NULL DEFAULT 0,

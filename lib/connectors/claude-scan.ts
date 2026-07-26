@@ -31,8 +31,11 @@ import {
  * answers a different question — rolling 5h/weekly/monthly windows for
  * the Settings cards — at a granularity days can't express.)
  *
- * Privacy: numeric usage fields, timestamps, model ids, cwd, branch name,
- * and PR references only. Message content is never read or returned.
+ * Privacy: lines are `JSON.parse`d, so message content passes through
+ * memory — but only numeric usage fields, timestamps, model ids, cwd,
+ * branch name, and PR references are inspected, aggregated, stored, or
+ * returned. The narrower phrasing is deliberate: "content is never read"
+ * overpromised what the code does (Codex, PR #8).
  */
 
 /** A `pr-link` record: Claude Code's own exact session→PR join. */
@@ -55,6 +58,7 @@ export interface ScannedSession {
   model: string;
   input_tokens: number;
   cached_tokens: number;
+  cache_write_tokens: number;
   output_tokens: number;
   total_tokens: number;
   turns: number;
@@ -88,6 +92,7 @@ interface SessionAccumulator {
   modelTurns: Map<string, number>;
   input: number;
   cached: number;
+  cacheWrite: number;
   output: number;
   total: number;
   turns: number;
@@ -197,6 +202,7 @@ function finalizeSession(acc: SessionAccumulator): ScannedSession {
     model,
     input_tokens: acc.input,
     cached_tokens: acc.cached,
+    cache_write_tokens: acc.cacheWrite,
     output_tokens: acc.output,
     total_tokens: acc.total,
     turns: acc.turns,
@@ -275,9 +281,12 @@ async function scanFile(
           : null;
 
       const input = numOr0(usage.input_tokens);
-      const cached =
-        numOr0(usage.cache_read_input_tokens) +
-        numOr0(usage.cache_creation_input_tokens);
+      // Reads and writes stay separate all the way through: a cache READ
+      // costs ~10% of input, a cache WRITE costs ~25% MORE than input.
+      // Merging them and pricing the total at the read rate understated
+      // every long session's API-equivalent value (Codex, PR #8).
+      const cached = numOr0(usage.cache_read_input_tokens);
+      const cacheWrite = numOr0(usage.cache_creation_input_tokens);
       const output = numOr0(usage.output_tokens);
 
       accumulateSession(ctx.sessions, {
@@ -288,6 +297,7 @@ async function scanFile(
         model,
         input,
         cached,
+        cacheWrite,
         output,
         filePath,
         encodedDir,
@@ -312,11 +322,12 @@ async function scanFile(
       }
       acc.row.input_tokens += input;
       acc.row.cached_tokens += cached;
+      acc.row.cache_write_tokens += cacheWrite;
       acc.row.output_tokens += output;
       // Cache reads and writes are real tokens the window caps count, so
       // they belong in the total — leaving them out would understate a
       // heavy Claude Code day by an order of magnitude.
-      acc.row.total_tokens += input + cached + output;
+      acc.row.total_tokens += input + cached + cacheWrite + output;
       acc.row.turns += 1;
       acc.sessionIds.add(sessionId);
 
@@ -343,6 +354,7 @@ interface TurnInput {
   model: string;
   input: number;
   cached: number;
+  cacheWrite: number;
   output: number;
   filePath: string;
   encodedDir: string;
@@ -364,6 +376,7 @@ function accumulateSession(
       modelTurns: new Map(),
       input: 0,
       cached: 0,
+      cacheWrite: 0,
       output: 0,
       total: 0,
       turns: 0,
@@ -383,8 +396,9 @@ function accumulateSession(
   }
   acc.input += turn.input;
   acc.cached += turn.cached;
+  acc.cacheWrite += turn.cacheWrite;
   acc.output += turn.output;
-  acc.total += turn.input + turn.cached + turn.output;
+  acc.total += turn.input + turn.cached + turn.cacheWrite + turn.output;
   acc.turns += 1;
 }
 

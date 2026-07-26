@@ -135,7 +135,7 @@ export default function AnalyticsPage() {
         </h1>
         <Link
           href="/"
-          className="text-xs text-kraken-ice underline-offset-2 transition hover:underline"
+          className="tap inline-flex items-center text-xs text-kraken-ice underline-offset-2 transition hover:underline"
         >
           ← Dashboard
         </Link>
@@ -153,7 +153,7 @@ export default function AnalyticsPage() {
             role="tab"
             aria-selected={tab === entry.id}
             onClick={() => selectTab(entry.id)}
-            className={`min-h-[36px] rounded-full px-4 text-xs font-medium transition ${
+            className={`tap rounded-full px-4 text-xs font-medium transition ${
               tab === entry.id
                 ? "bg-kraken-ice text-kraken-deep"
                 : "border border-kraken-boundless text-zinc-300 hover:bg-kraken-boundless/30"

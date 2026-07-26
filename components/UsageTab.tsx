@@ -235,7 +235,7 @@ export function UsageTab() {
               key={days}
               type="button"
               onClick={() => setWindowDays(days)}
-              className={`min-h-[36px] rounded-full px-3 text-xs font-medium transition ${
+              className={`tap rounded-full px-3 text-xs font-medium transition ${
                 windowDays === days
                   ? "bg-kraken-ice text-kraken-deep"
                   : "border border-kraken-boundless text-zinc-300 hover:bg-kraken-boundless/30"
@@ -252,7 +252,7 @@ export function UsageTab() {
             void load(windowDays, true);
           }}
           disabled={refreshing}
-          className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30 disabled:opacity-50"
+          className="tap rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30 disabled:opacity-50"
         >
           {refreshing ? "reading…" : "↻ Refresh"}
         </button>
@@ -692,11 +692,15 @@ function RhythmCard({
 }: {
   rhythm: UsageSummary["rhythm"];
 }) {
-  const total = rhythm.reduce((sum, c) => sum + c.turns + c.events, 0);
+  // Turns only. Google's `events` counts EVERY step and `turns` is the
+  // PLANNER_RESPONSE subset of those same events — adding the two counted
+  // each model response twice and promoted file-views and tool calls to
+  // "turns", inflating the peak hour and every tooltip (Codex, PR #8).
+  const total = rhythm.reduce((sum, c) => sum + c.turns, 0);
   if (total === 0) return null;
 
   const byCell = new Map(
-    rhythm.map((c) => [`${c.weekday}-${c.hour}`, c.turns + c.events]),
+    rhythm.map((c) => [`${c.weekday}-${c.hour}`, c.turns]),
   );
   const max = Math.max(...byCell.values(), 1);
 

@@ -79,6 +79,7 @@ export function SubscriptionEditor() {
 
   const save = async (key: ProviderKey): Promise<void> => {
     setBusy(true);
+    setError(null);
     try {
       // Empty input means "clear this field", which is why each value is
       // sent as an explicit null rather than being omitted — omission
@@ -100,6 +101,13 @@ export function SubscriptionEditor() {
       }
       setEditing(null);
       await refresh();
+    } catch (err) {
+      // A dropped connection, a non-JSON response, or an aborted request
+      // all land here. Without this the click handler's discarded promise
+      // turned the failure into an unhandled rejection: the sheet stayed
+      // open, nothing was shown, and the user had no way to tell the save
+      // hadn't happened (Codex, PR #8).
+      setError((err as Error).message || "Save failed");
     } finally {
       setBusy(false);
     }
@@ -164,7 +172,7 @@ export function SubscriptionEditor() {
                       type="button"
                       onClick={() => void save(key)}
                       disabled={busy}
-                      className="min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50"
+                      className="tap rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50"
                     >
                       Save
                     </button>
@@ -172,7 +180,7 @@ export function SubscriptionEditor() {
                       type="button"
                       onClick={() => setEditing(null)}
                       disabled={busy}
-                      className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
+                      className="tap rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
                     >
                       Cancel
                     </button>
@@ -193,7 +201,7 @@ export function SubscriptionEditor() {
                     type="button"
                     onClick={() => startEdit(key)}
                     aria-label={`Edit ${label} subscription`}
-                    className="min-h-[36px] shrink-0 rounded-md border border-kraken-boundless px-2 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
+                    className="tap shrink-0 rounded-md border border-kraken-boundless px-2 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
                   >
                     ✏️
                   </button>

@@ -1,4 +1,5 @@
 import {
+  distinctSessionDays,
   latestUsageDay,
   listUsageDaily,
   usageBy,
@@ -100,7 +101,10 @@ export interface FleetTotals {
   reasoningTokens: number;
   /** Turns across ALL providers — every one of them records these. */
   turns: number;
-  /** Session/conversation starts per day, summed. See UsageTotals.sessions. */
+  /**
+   * Distinct session-days, NOT a sum of the per-dimension counter — that
+   * double-counts a session that used two models on one day.
+   */
   sessions: number;
   /** Antigravity activity steps, kept separate from turns. */
   events: number;
@@ -208,6 +212,7 @@ function buildFleetTotals(
         model: row.model,
         input_tokens: row.input_tokens,
         cached_tokens: row.cached_tokens,
+        cache_write_tokens: row.cache_write_tokens,
         output_tokens: row.output_tokens,
       })),
   );
@@ -220,7 +225,10 @@ function buildFleetTotals(
     reasoningTokens: sum(tokenProviders, (t) => t.reasoning_tokens),
     // Turns and sessions span everything — all three providers record them.
     turns: sum(providers, (t) => t.turns),
-    sessions: sum(providers, (t) => t.sessions),
+    // Counted per (day, provider), not summed across ledger rows: a
+    // session that used two models on one day is stored as 1 on each of
+    // its rows, so summing reports 2 (Codex, PR #8).
+    sessions: distinctSessionDays(range),
     events: sum(providers, (t) => t.events),
     activeDays: activeDays.size,
     tokenProviders: tokenProviders.map((p) => p.provider),
@@ -273,6 +281,7 @@ function buildProvider(
           model: row.model,
           input_tokens: row.input_tokens,
           cached_tokens: row.cached_tokens,
+          cache_write_tokens: row.cache_write_tokens,
           output_tokens: row.output_tokens,
         })),
       )

@@ -61,3 +61,30 @@ body {
 .font-mono {
   font-variant-numeric: tabular-nums;
 }
+
+/* Secondary controls — filter pills, inline row actions, disclosure
+   summaries.
+
+   design.md's touch-target rule is 44px and non-negotiable, and it names
+   this exact escape hatch: "If a future dense desktop-only control ever
+   needs natural scale, keep the 44px floor under @media (pointer: coarse)
+   rather than dropping it."
+
+   The codebase had drifted to a bare 36px minimum in 28 places, which
+   silently dropped the floor everywhere including touch (caught by Codex
+   on PR #8). This class restores it: 36px where there's a mouse, 44px
+   wherever the pointer is coarse — phone, tablet, or a touchscreen
+   laptop. A row of filter pills stays dense on desktop and thumbable on
+   a phone, which is what the rule wanted all along.
+
+   Use this instead of a hardcoded 36px minimum. Primary actions and
+   form inputs stay at a flat 44px. */
+.tap {
+  min-height: 36px;
+}
+
+@media (pointer: coarse) {
+  .tap {
+    min-height: 44px;
+  }
+}

@@ -29,8 +29,12 @@ import {
  * AI locally", so we surface counts — user prompts, model turns, tool
  * calls — windowed the same way the Claude card windows tokens.
  *
- * Privacy: we only read `source`, `type`, `created_at`, and the *length*
- * of `tool_calls`. Message `content` / `thinking` is never read or returned.
+ * Privacy: the reader `JSON.parse`s each line, so message `content` /
+ * `thinking` does pass through memory — but only `source`, `type`,
+ * `created_at`, and the *length* of `tool_calls` are ever inspected,
+ * aggregated, stored, or returned. Stated this way deliberately: the
+ * older "content is never read" phrasing promised privacy reviewers a
+ * stronger guarantee than the code delivers (Codex, PR #8).
  */
 
 export interface GeminiActivityWindow {

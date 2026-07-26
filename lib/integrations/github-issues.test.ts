@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { _resetDbForTests, getDb } from "../db/index";
+import { setSetting } from "../db/settings";
 import {
   breadcrumb,
   idFromBody,
@@ -8,7 +13,12 @@ import {
   refFor,
   renderIssueBody,
 } from "./github-issues";
-import { slugLabel } from "../orchestrator/github-mirror";
+import {
+  addTombstone,
+  readTombstones,
+  slugLabel,
+  TOMBSTONE_KEY,
+} from "../orchestrator/github-mirror";
 
 describe("issue refs", () => {
   it("round-trips owner/repo#n", () => {
@@ -112,5 +122,38 @@ describe("slugLabel", () => {
   it("trims separators and bounds the length", () => {
     expect(slugLabel("  --Hello--  ")).toBe("hello");
     expect(slugLabel("x".repeat(80)).length).toBeLessThanOrEqual(40);
+  });
+});
+
+describe("deletion tombstones (Codex P2, PR #8)", () => {
+  beforeEach(() => {
+    _resetDbForTests();
+    const dir = mkdtempSync(join(tmpdir(), "drydock-tombstone-"));
+    process.env.DRYDOCK_DB_PATH = join(dir, "test.db");
+    getDb();
+  });
+
+  it("survives the row it refers to", () => {
+    // `DELETE /api/backlog/[id]` removes the row AND its
+    // `github_issue_ref`, and the mirror only walks live rows — so the
+    // orphaned issue could never be found again and would stay open
+    // forever in the "durable" tracker.
+    addTombstone("owner/backlog#42");
+    expect(readTombstones()).toEqual(["owner/backlog#42"]);
+  });
+
+  it("does not queue the same ref twice", () => {
+    addTombstone("owner/backlog#42");
+    addTombstone("owner/backlog#42");
+    expect(readTombstones()).toEqual(["owner/backlog#42"]);
+  });
+
+  it("ignores an empty ref and survives corrupt storage", () => {
+    addTombstone("");
+    expect(readTombstones()).toEqual([]);
+    setSetting(TOMBSTONE_KEY, "not json");
+    expect(readTombstones()).toEqual([]);
+    setSetting(TOMBSTONE_KEY, '{"not":"an array"}');
+    expect(readTombstones()).toEqual([]);
   });
 });

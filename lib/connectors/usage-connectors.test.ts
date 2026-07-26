@@ -53,6 +53,8 @@ beforeEach(() => {
   process.env.DRYDOCK_CLAUDE_PROJECTS_DIR = claudeDir;
   process.env.DRYDOCK_CODEX_SESSIONS_DIR = codexDir;
   process.env.DRYDOCK_ANTIGRAVITY_BRAIN_DIR = brainDir;
+  // Never fall through to the developer's real ~/.gemini/antigravity-cli.
+  process.env.DRYDOCK_ANTIGRAVITY_CLI_DIR = join(home, "no-agy-cli");
   getDb();
 });
 
@@ -61,6 +63,7 @@ afterEach(() => {
   delete process.env.DRYDOCK_CLAUDE_PROJECTS_DIR;
   delete process.env.DRYDOCK_CODEX_SESSIONS_DIR;
   delete process.env.DRYDOCK_ANTIGRAVITY_BRAIN_DIR;
+  delete process.env.DRYDOCK_ANTIGRAVITY_CLI_DIR;
 });
 
 function writeClaudeSession(

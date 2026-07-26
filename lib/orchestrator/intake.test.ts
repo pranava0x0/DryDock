@@ -238,3 +238,37 @@ describe("triage migration", () => {
     expect(inboxCount()).toBe(1);
   });
 });
+
+describe("Apple Notes title-claim (Codex P2, PR #8)", () => {
+  it("triages an inbox row when a Note line claims it", async () => {
+    // A capture without an idempotency key has a null external_id, so
+    // the Notes pull's title-claim fallback could adopt it. Because the
+    // push renders triaged rows only, the very next write would DELETE
+    // that line from the Note instead of adopting it. A line present in
+    // the Note is by definition in the trusted list.
+    const { applyPulledLines } = await import("./backlog");
+    const { lineId } = await import("../integrations/apple-notes");
+
+    const captured = intakeCapture({
+      text: "rate limiter for the tunnel",
+      source: "shortcut",
+    });
+    expect(captured.item!.triaged_at).toBeNull();
+    expect(captured.item!.external_id).toBeNull();
+
+    applyPulledLines([
+      {
+        text: "rate limiter for the tunnel",
+        externalId: lineId("rate limiter for the tunnel"),
+        done: false,
+        createdAt: null,
+      },
+    ]);
+
+    const claimed = listBacklog().find((i) => i.id === captured.item!.id)!;
+    expect(claimed.source).toBe("apple-notes");
+    expect(claimed.triaged_at).not.toBeNull();
+    // And therefore it survives the next push rather than being deleted.
+    expect(listBacklog({ stage: "triaged" })).toHaveLength(1);
+  });
+});

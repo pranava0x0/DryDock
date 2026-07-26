@@ -37,6 +37,16 @@ export interface ModelPrice {
    * Claude Code day badly — cache reads dominate its token counts.
    */
   cacheReadPerMTok: number;
+  /**
+   * USD per million cache-*write* tokens. Writes cost MORE than plain
+   * input (a 25% premium at Anthropic's published rates), not less.
+   *
+   * An earlier cut merged writes into `cached_tokens` and priced the
+   * whole lot at the read rate, understating any usage that built cache
+   * — which is every long Claude Code session (Codex caught this on
+   * PR #8). Reads and writes now travel separately end to end.
+   */
+  cacheWritePerMTok: number;
 }
 
 /**
@@ -45,17 +55,33 @@ export interface ModelPrice {
  * `-20251001` doesn't need its own entry.
  */
 const PRICES: ReadonlyArray<readonly [string, ModelPrice]> = [
+  // Cache writes carry a 25% premium over input; reads are 10% of it.
   [
     "claude-opus",
-    { inputPerMTok: 15, outputPerMTok: 75, cacheReadPerMTok: 1.5 },
+    {
+      inputPerMTok: 15,
+      outputPerMTok: 75,
+      cacheReadPerMTok: 1.5,
+      cacheWritePerMTok: 18.75,
+    },
   ],
   [
     "claude-sonnet",
-    { inputPerMTok: 3, outputPerMTok: 15, cacheReadPerMTok: 0.3 },
+    {
+      inputPerMTok: 3,
+      outputPerMTok: 15,
+      cacheReadPerMTok: 0.3,
+      cacheWritePerMTok: 3.75,
+    },
   ],
   [
     "claude-haiku",
-    { inputPerMTok: 1, outputPerMTok: 5, cacheReadPerMTok: 0.1 },
+    {
+      inputPerMTok: 1,
+      outputPerMTok: 5,
+      cacheReadPerMTok: 0.1,
+      cacheWritePerMTok: 1.25,
+    },
   ],
 ] as const;
 
@@ -88,7 +114,10 @@ export function priceFor(model: string): ModelPrice | null {
 export interface TokenBundle {
   model: string;
   input_tokens: number;
+  /** Cache READS — the cheap ones. */
   cached_tokens: number;
+  /** Cache WRITES — dearer than input. Separate for a reason; see above. */
+  cache_write_tokens?: number;
   output_tokens: number;
 }
 
@@ -119,6 +148,7 @@ export function estimateApiValue(bundles: TokenBundle[]): ValueEstimate {
     const total =
       Math.max(0, b.input_tokens) +
       Math.max(0, b.cached_tokens) +
+      Math.max(0, b.cache_write_tokens ?? 0) +
       Math.max(0, b.output_tokens);
     const price = priceFor(b.model);
     if (!price) {
@@ -129,6 +159,8 @@ export function estimateApiValue(bundles: TokenBundle[]): ValueEstimate {
     usd +=
       (Math.max(0, b.input_tokens) / 1_000_000) * price.inputPerMTok +
       (Math.max(0, b.cached_tokens) / 1_000_000) * price.cacheReadPerMTok +
+      (Math.max(0, b.cache_write_tokens ?? 0) / 1_000_000) *
+        price.cacheWritePerMTok +
       (Math.max(0, b.output_tokens) / 1_000_000) * price.outputPerMTok;
   }
 

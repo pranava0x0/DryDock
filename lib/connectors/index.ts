@@ -1,5 +1,6 @@
 import type { CollectResult, Connector, ConnectorHealth, ConnectorKey } from "./types";
 import {
+  _recordConnectorFailure,
   antigravityLocalConnector,
   claudeLocalConnector,
   codexLocalConnector,
@@ -51,10 +52,16 @@ export async function collectUsage(
       try {
         return await connector.collect(opts);
       } catch (err) {
+        const reason = (err as Error).message || "collect failed";
+        // Persist it: a background collect discards the returned value,
+        // so without this `health()` would keep reporting the previous
+        // `ok` and the card would claim everything was fine while every
+        // refresh failed.
+        _recordConnectorFailure(connector.key, reason);
         return {
           key: connector.key,
           status: "unavailable" as const,
-          reason: (err as Error).message || "collect failed",
+          reason,
           rowsWritten: 0,
           itemsScanned: 0,
           durationMs: 0,

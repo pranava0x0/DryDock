@@ -263,6 +263,7 @@ export const antigravityLocalConnector = makeUsageConnector({
     const result = await scanAntigravityActivity(
       sourceDir("DRYDOCK_ANTIGRAVITY_BRAIN_DIR"),
       since,
+      sourceDir("DRYDOCK_ANTIGRAVITY_CLI_DIR"),
     );
     return {
       daily: result.daily,
@@ -272,6 +273,23 @@ export const antigravityLocalConnector = makeUsageConnector({
     };
   },
 });
+
+/**
+ * Record a failure that happened outside `collect()`'s own try — a throw
+ * from the scanner or the ledger write that the registry caught.
+ *
+ * Without this, `collectUsage`'s catch built an `unavailable` result that
+ * the background collector then discarded, leaving `health()` reading a
+ * stale `ok` from the previous successful run. The card would keep
+ * claiming everything was fine while refreshes silently failed (Codex,
+ * PR #8).
+ */
+export function _recordConnectorFailure(
+  key: ConnectorKey,
+  reason: string,
+): void {
+  lastOutcome.set(key, { status: "unavailable", reason });
+}
 
 /**
  * Test seam: `health()` remembers the last outcome in module state so the

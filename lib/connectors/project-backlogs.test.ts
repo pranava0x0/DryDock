@@ -189,3 +189,63 @@ describe("importProjectBacklogs", () => {
     expect(after.items.map((i) => i.title)).toEqual(["one idea"]);
   });
 });
+
+describe("reconciliation (Codex P2, PR #8)", () => {
+  it("closes a row when its source line is later ticked", async () => {
+    // Previously the `done` filter dropped completed lines entirely, so
+    // the import loop never saw them again and an already-imported row
+    // stayed actionable in DryDock forever.
+    const path = join(root, "India");
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, "backlog.md"), "- [ ] ship the thing\n");
+    createProject({ name: "India", path, provider: "claude" });
+
+    await importProjectBacklogs();
+    expect(listBacklog({ stage: "inbox" })[0].status).toBe("idea");
+
+    writeFileSync(join(path, "backlog.md"), "- [x] ship the thing\n");
+    const [result] = await importProjectBacklogs();
+
+    expect(result.completed).toBe(1);
+    expect(listBacklog()[0].status).toBe("done");
+  });
+
+  it("never creates a row for a line that was already done", async () => {
+    makeProject("Juliet", { "backlog.md": "- [x] historical thing\n" });
+    const [result] = await importProjectBacklogs();
+    expect(result.created).toBe(0);
+    expect(result.completed).toBe(0);
+    expect(listBacklog()).toHaveLength(0);
+  });
+
+  it("REFRESHES a renamed line instead of duplicating it", async () => {
+    // Identity is (project, file, ordinal), not the title slug — a slug
+    // changes the moment the line is reworded, and the old identity
+    // scheme then created a second row and left the stale title behind.
+    const path = join(root, "Kilo");
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, "backlog.md"), "- add rate limiting\n");
+    createProject({ name: "Kilo", path, provider: "claude" });
+
+    await importProjectBacklogs();
+    writeFileSync(
+      join(path, "backlog.md"),
+      "- add rate limiting to the tunnel endpoints\n",
+    );
+    const [result] = await importProjectBacklogs();
+
+    expect(result.updated).toBe(1);
+    expect(result.created).toBe(0);
+    const rows = listBacklog();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe("add rate limiting to the tunnel endpoints");
+  });
+
+  it("gives each line its own identity so two items never collide", async () => {
+    makeProject("Lima", {
+      "backlog.md": ["- first idea", "- second idea"].join("\n"),
+    });
+    await importProjectBacklogs();
+    expect(listBacklog()).toHaveLength(2);
+  });
+});

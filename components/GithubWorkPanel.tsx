@@ -199,7 +199,7 @@ export function GithubWorkPanel({ onChange }: { onChange: () => void }) {
                 void load(true).then(onChange);
               }}
               disabled={busy}
-              className="mt-2 min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30 disabled:opacity-50"
+              className="mt-2 tap rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30 disabled:opacity-50"
             >
               {busy ? "filing…" : "File issues into the backlog"}
             </button>

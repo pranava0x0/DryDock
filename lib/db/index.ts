@@ -132,6 +132,11 @@ function migrate(db: DB): void {
   // before these tables were added, the IF NOT EXISTS makes the create
   // safe to re-run, but a column-level migration is still needed for
   // columns added to an existing table — keep this list current.
+  ensure(
+    "usage_daily",
+    "cache_write_tokens",
+    "cache_write_tokens INTEGER NOT NULL DEFAULT 0",
+  );
   ensure("backlog_items", "triaged_at", "triaged_at INTEGER");
   ensure("backlog_items", "raw_capture", "raw_capture TEXT");
   ensure("backlog_items", "github_issue_ref", "github_issue_ref TEXT");

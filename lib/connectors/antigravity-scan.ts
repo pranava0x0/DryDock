@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { mayContainRecentTurns } from "../providers/usage-mtime";
+import { readAntigravityCliActivity } from "../providers/antigravity-cli";
 import { localDayKey, localHour } from "../util/day";
 import {
   emptyUsageRow,
@@ -42,18 +43,33 @@ interface Accumulator {
 export async function scanAntigravityActivity(
   rootDir: string = join(homedir(), ".gemini", "antigravity", "brain"),
   since: Date = new Date(0),
+  // Absolute, not derived from `rootDir` — the CLI store is not a sibling
+  // of the IDE's brain dir, and walking up from a fixture path would read
+  // whatever sits next to the OS temp directory.
+  cliDir: string = join(homedir(), ".gemini", "antigravity-cli"),
 ): Promise<AntigravityScanResult> {
+  // The `agy` CLI keeps its own SQLite store, separate from the IDE logs.
+  // It was previously surfaced only on the Settings card, so a CLI-only
+  // user's activity never reached the ledger and the Usage tab reported
+  // Google as unavailable (Codex, PR #8).
+  const cli = await readAntigravityCliActivity(cliDir, since);
+
   let convDirs: string[];
   try {
     convDirs = await fs.readdir(rootDir);
   } catch {
-    return {
-      daily: [],
-      hourly: [],
-      conversationsScanned: 0,
-      latestActivityAt: null,
-      rootMissing: true,
-    };
+    // Only genuinely missing when NEITHER store is present. A CLI-only
+    // install has real activity to report.
+    if (cli.health !== "ok" || cli.events === 0) {
+      return {
+        daily: [],
+        hourly: [],
+        conversationsScanned: 0,
+        latestActivityAt: null,
+        rootMissing: true,
+      };
+    }
+    convDirs = [];
   }
 
   const daily = new Map<string, Accumulator>();
@@ -89,6 +105,23 @@ export async function scanAntigravityActivity(
   }
 
   for (const acc of daily.values()) acc.row.sessions = acc.conversations.size;
+
+  // The CLI probe reports a single in-window total rather than per-day
+  // rows — its schema is unverified and inventing a daily distribution
+  // from one number would be fabrication. Attribute it to the scan's
+  // start day and label it plainly.
+  if (cli.health === "ok" && cli.events > 0) {
+    const day = localDayKey(since.getTime() > 0 ? since : new Date());
+    const existing = daily.get(day);
+    if (existing) {
+      existing.row.events += cli.events;
+    } else {
+      const row = emptyUsageRow(day, "google", "cli");
+      row.events = cli.events;
+      row.sessions = cli.conversations;
+      daily.set(day, { row, conversations: new Set() });
+    }
+  }
 
   return {
     daily: [...daily.values()].map((a) => a.row),
