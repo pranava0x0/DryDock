@@ -177,6 +177,64 @@ normal speech is safe.
 - **The Shortcut itself isn't unit-tested** (it lives on the phone). The
   endpoint it calls is. Verify the Shortcut by using it.
 
+## 9. Connect the satellites (MCP)
+
+DryDock exposes a small MCP server so other Claude Code sessions — the
+nightly idea generator, the Daily Briefing job — can read the backlog and
+propose items without opening the database themselves.
+
+Register it once per satellite:
+
+```bash
+claude mcp add --scope user drydock -- npx tsx /absolute/path/to/DryDock/mcp/server.ts
+```
+
+### What it can and can't do
+
+| Tool | What it does |
+|---|---|
+| `add_backlog_item` | **Proposes** an item. Lands in the inbox, never the backlog, never the Apple Note. |
+| `list_backlog` | Reads the accepted list (or the inbox, on request). |
+| `list_tasks` / `get_task_status` | Reads orchestrator state — "what needs attention". |
+| `get_usage_stats` | AI usage over a recent window, from the local ledger. |
+| `burn_down_item` | Turns an **accepted** item into a *pending* task. |
+
+**`dispatch_task` is not exposed, and that's deliberate.** The primary
+consumer reads untrusted web content; giving it the ability to start an
+agent would complete the lethal trifecta — untrusted input, private data,
+and a way to act. The most a hostile page can achieve through this
+surface is proposing an inbox item, which you sweep with one tap.
+`burn_down_item` is the boundary case and is allowed because the task it
+creates is *pending*: a human still has to press Run. That's the same
+line the UI already draws.
+
+The withheld list is written down explicitly in
+[lib/mcp/tools.ts](../lib/mcp/tools.ts) (`WITHHELD_TOOLS`) so the omission
+reads as a decision rather than an oversight — and so adding dispatch
+later reads as the deliberate reversal it would be.
+
+### Caller identity
+
+Set by the environment, never by the caller:
+
+```bash
+DRYDOCK_MCP_CALLER=ai-generated   # default — proposals land as `proposed`
+DRYDOCK_MCP_CALLER=manual         # a human-driven session
+```
+
+It defaults to the *less* trusted identity on purpose: a
+misconfiguration should under-trust, never over-trust. The tool forces
+this value into every write, so a caller passing `source: "manual"` in
+its arguments has no effect.
+
+### Verify it
+
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize"}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | npx tsx mcp/server.ts
+```
+
+You should see six tools, and `dispatch_task` should not be among them.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
