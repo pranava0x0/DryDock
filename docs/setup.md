@@ -235,6 +235,118 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize"}' '{"jsonrpc":"2.0"
 
 You should see six tools, and `dispatch_task` should not be among them.
 
+## 10. Keep it running (launchd) and the TCC caveat
+
+Everything scheduled — the 7am digest, the nightly idea import — assumes
+the Mac is awake and DryDock is reachable. Two things make that true, and
+one of them has a trap in it.
+
+### The trap: Full Disk Access does not survive launchd
+
+`~/Library/Messages/chat.db` is TCC-protected. The Next.js server
+**inherits** Full Disk Access from the terminal that launched it, so a
+DryDock started by hand from an FDA-granted Terminal can read it — and
+the same DryDock started by `launchd` **cannot**.
+
+That affects exactly one feature, the iMessage capture channel (§11), and
+it fails honestly: the channel reports "no Full Disk Access" with the fix
+rather than quietly capturing nothing.
+
+So pick per what you use:
+
+- **Using iMessage capture?** Keep launching from an FDA-granted
+  terminal. Grant it under System Settings → Privacy & Security → Full
+  Disk Access.
+- **Not using it?** launchd is fine, and everything else in DryDock is
+  TCC-free.
+
+### The plist
+
+```xml
+<!-- ~/Library/LaunchAgents/com.pranava.drydock.plist -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.pranava.drydock</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/npm</string>
+    <string>run</string>
+    <string>start</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/pranava/Projects/DryDock</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/drydock.log</string>
+  <key>StandardErrorPath</key><string>/tmp/drydock.err</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.pranava.drydock.plist
+```
+
+Run a production build first (`npm run build`) — `npm start` serves that,
+and `ACTIVE_RUNS` only behaves correctly in a single production server
+anyway (see AGENTS.md on the dev-mode cancel caveat).
+
+### Watchdog
+
+`KeepAlive` restarts a crashed process but says nothing about a process
+that is up and broken. Scheduled jobs that depend on a local surface
+should **log and alert** when a dependency is down rather than failing
+silently — the connector health states exist precisely so a job can check
+before it reports.
+
+There is a documented `claude -p` hang under launchd; that's why the
+briefing runs as a Claude Code **Desktop Scheduled Task** rather than a
+launchd job, and only the server is managed here.
+
+## 11. Text yourself an idea (iMessage)
+
+The channel with the most existing muscle memory and the most moving
+parts. Built last on purpose: it is slower than Siri (~4–6s, and it needs
+the phone unlocked) and considerably more fragile.
+
+Enable it in Settings, or:
+
+```bash
+curl -X POST http://localhost:3000/api/capture/imessage \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"self_handle":"+15555550123"}'
+```
+
+`self_handle` is **the number or email you text yourself at**, and it is
+required — a Mac has several handles and guessing would silently watch
+the wrong thread, which looks identical to a broken feature.
+
+Enabling seeds the cursor at your newest message. Without that, the first
+poll would walk back through years of texts and file every one that ever
+started with "idea:".
+
+### Using it
+
+> **idea:** rate limiter for the tunnel endpoints
+
+The `idea:` prefix is required by default so texting yourself a grocery
+list doesn't become a backlog item. Clear it (`{"trigger":""}`) to
+capture everything you send yourself.
+
+### What it does about the hard parts
+
+- **52% of messages on this Mac have a NULL `text` column** and store the
+  body only in `attributedBody`, a serialized NSAttributedString. DryDock
+  decodes it ([lib/integrations/typedstream.ts](../lib/integrations/typedstream.ts)),
+  validated against 4,000 real messages that have both fields — 4,000
+  exact matches, zero mismatches.
+- **A message it can't decode still becomes an inbox row**, labelled
+  "text unreadable — open Messages". Silently skipping would lose a
+  thought with no trace that anything happened.
+- **Full Disk Access** — see §10. `health()` reports the real reason.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |

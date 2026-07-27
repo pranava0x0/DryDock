@@ -2,6 +2,8 @@ import {
   getBacklogItem,
   inboxCount,
   listBacklog,
+  triageBacklogItem,
+  updateBacklogItem,
   type BacklogStatus,
 } from "../db/backlog";
 import { listTasks, getTask, type TaskStatus } from "../db/tasks";
@@ -69,13 +71,20 @@ export const TOOLS_BY_CALLER: Record<CallerIdentity, readonly string[]> = {
   // Reads untrusted web content. Propose-only: no reads of private
   // local state, no mutations.
   "ai-generated": ["add_backlog_item"],
-  // A human is driving. Read + propose + create-a-pending-task.
+  // A human is driving. Read + propose + triage + create-a-pending-task.
+  // `triage_backlog_item` and `drop_backlog_item` exist for reply-to-act
+  // ("accept 2", "drop 3" from the morning digest) and are manual-only by
+  // construction: accepting a proposal is precisely the human gate the
+  // inbox exists to enforce, so a session reading untrusted pages must
+  // never be able to approve its own suggestions.
   manual: [
     "add_backlog_item",
     "list_backlog",
     "list_tasks",
     "get_task_status",
     "get_usage_stats",
+    "triage_backlog_item",
+    "drop_backlog_item",
     "burn_down_item",
   ],
 };
@@ -324,6 +333,46 @@ function allTools(caller: CallerIdentity): ToolDefinition[] {
             })),
           note: "Google AI records no token counts locally; its usage appears as activity_events only.",
         };
+      },
+    },
+
+    {
+      name: "triage_backlog_item",
+      description:
+        "Accept an inbox item into the trusted backlog — the 'accept N' reply action. Promotes a machine proposal to a real idea and lets it reach Apple Notes and the GitHub mirror.",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+      },
+      handler: (args) => {
+        const id = str(args, "id");
+        if (!id) throw new Error("`id` is required");
+        const item = triageBacklogItem(id);
+        if (!item) return { ok: false, reason: "no such backlog item" };
+        return { ok: true, id: item.id, title: item.title, status: item.status };
+      },
+    },
+
+    {
+      name: "drop_backlog_item",
+      description:
+        "Dismiss an inbox item — the 'drop N' reply action. Sets status to dropped; it is NOT deleted, so nothing is unrecoverable.",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+      },
+      handler: (args) => {
+        const id = str(args, "id");
+        if (!id) throw new Error("`id` is required");
+        const existing = getBacklogItem(id);
+        if (!existing) return { ok: false, reason: "no such backlog item" };
+        // `dropped`, never a DELETE. A reply typed one-handed from a lock
+        // screen is exactly the place not to make something
+        // unrecoverable — the row stays, filtered out of every list.
+        const item = updateBacklogItem(id, { status: "dropped" });
+        return { ok: true, id, title: item?.title ?? existing.title };
       },
     },
 
