@@ -40,13 +40,22 @@ export async function GET(): Promise<Response> {
  * feature straight back off.
  */
 export async function POST(request: NextRequest): Promise<Response> {
-  let body: unknown = {};
-  try {
-    body = await request.json();
-  } catch {
-    // An empty body means "just poll with the current settings".
+  // A body that fails to parse and a body that asked to poll must not be
+  // handled identically. Polling is idempotent so the blast radius is
+  // small, but "parse failed, therefore mutate" is the wrong default.
+  let raw: Record<string, unknown> = {};
+  const rawText = await request.text();
+  if (rawText.trim().length > 0) {
+    try {
+      const parsed: unknown = JSON.parse(rawText);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        return badRequest("Request body must be a JSON object");
+      }
+      raw = parsed as Record<string, unknown>;
+    } catch {
+      return badRequest("Request body must be valid JSON");
+    }
   }
-  const raw = (body ?? {}) as Record<string, unknown>;
 
   try {
     if (raw.self_handle !== undefined) {
@@ -74,7 +83,12 @@ export async function POST(request: NextRequest): Promise<Response> {
       if (raw.enabled && !wasEnabled) seeded = seedImessageCursor();
     }
 
-    const polled = raw.poll === false ? null : pollImessages();
+    // Poll when explicitly asked, or when the caller sent nothing at all
+    // (the cron shape). A body that *was* sent must ask for it — so a
+    // config-only save doesn't sweep as a side effect.
+    const shouldPoll =
+      raw.poll === true || Object.keys(raw).length === 0;
+    const polled = shouldPoll ? pollImessages() : null;
     return ok({
       enabled: getSetting(ENABLED_KEY) === "true",
       selfHandle: getSelfHandle(),

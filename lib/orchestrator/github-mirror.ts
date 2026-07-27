@@ -216,6 +216,8 @@ async function pullFromTracker(
         description: `From ${ref}`,
       });
       if (result.item) {
+        // Stamp the ref so the push loop recognizes it as already
+        // mirrored and doesn't create a *second* issue for it.
         updateBacklogItem(result.item.id, {
           github_issue_ref: ref,
           // Opening an issue is a deliberate act on a deliberate
@@ -298,13 +300,23 @@ async function pushToTracker(
     const issue = Number.isFinite(number) ? byNumber.get(number) : undefined;
     if (!issue) continue;
 
+    // **Never rewrite a body DryDock didn't author.** The breadcrumb is
+    // the proof of authorship: an issue the user wrote by hand in the
+    // tracker has no `<!-- drydock:id:… -->`, and rendering one for it
+    // would replace their text with our placeholder description — in the
+    // very same sync pass that imported it. The durable mirror's first
+    // act on an issue you wrote must not be to delete what you wrote.
+    const weWroteThisBody = idFromBody(issue.body) === item.id;
+
     // DB wins on push. Only write when something actually differs — an
     // unconditional edit would touch every issue every tick and bury the
     // tracker's own activity feed under sync noise.
-    if (issue.title !== item.title || issue.body !== body) {
+    const titleChanged = issue.title !== item.title;
+    const bodyChanged = weWroteThisBody && issue.body !== body;
+    if (titleChanged || bodyChanged) {
       const updated = await updateIssue(item.github_issue_ref, {
-        title: item.title,
-        body,
+        ...(titleChanged ? { title: item.title } : {}),
+        ...(bodyChanged ? { body } : {}),
       });
       if (updated.ok) stats.updated += 1;
       else if (stats.reason === null) stats.reason = updated.reason;

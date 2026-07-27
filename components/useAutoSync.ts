@@ -62,10 +62,22 @@ export function useAutoSync(opts: UseAutoSyncOptions = {}): AutoSyncState {
       const body = (await res.json()) as {
         lastSyncedAt?: number;
         error?: string;
+        mirror?: { status?: string; reason?: string | null };
       };
       if (!res.ok) throw new Error(body.error ?? "Sync failed");
       setLastSyncedAt(body.lastSyncedAt ?? Math.floor(Date.now() / 1000));
-      setError(null);
+      // The GitHub mirror runs in the same tick. Its failure is NOT the
+      // Notes sync's failure — Notes may have gone through perfectly —
+      // but showing a clean "Synced just now" while every GitHub write
+      // in that tick failed is the confident-wrong-value the rest of
+      // this codebase works hard to avoid. `disabled` is silent: no
+      // tracker repo configured is a setting, not a problem.
+      const mirror = body.mirror;
+      setError(
+        mirror && mirror.status === "unavailable"
+          ? `GitHub mirror: ${mirror.reason ?? "unavailable"}`
+          : null,
+      );
     } catch (err) {
       setError((err as Error).message);
     } finally {

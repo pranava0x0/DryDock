@@ -42,7 +42,15 @@ export interface ImportResult {
   reason: string | null;
 }
 
-function empty(provider: UsageProvider, reason: string): ImportResult {
+/**
+ * A zeroed result. `reason` is nullable because most call sites don't
+ * have one — an earlier cut passed `""` or cast `null as unknown as
+ * string` to satisfy a required parameter, and `/api/usage/import`
+ * branches on `if (result.reason)` to choose between 400 and 200. An
+ * empty string is falsy so it worked by accident; any edit making it a
+ * non-empty placeholder would turn every successful import into a 400.
+ */
+function empty(provider: UsageProvider, reason: string | null = null): ImportResult {
   return {
     provider,
     rows: 0,
@@ -90,8 +98,7 @@ function bucketKey(day: string, model: string): string {
  * did I use".
  */
 export function parseChatGptExport(input: unknown): ImportResult {
-  const result = empty("codex", null as unknown as string);
-  result.reason = null;
+  const result = empty("codex");
   if (!Array.isArray(input)) {
     return empty("codex", "expected conversations.json to be an array");
   }
@@ -141,8 +148,7 @@ export function parseGeminiTakeout(input: unknown): ImportResult {
   if (!Array.isArray(input)) {
     return empty("google", "expected a Takeout activity array");
   }
-  const result = empty("google", "");
-  result.reason = null;
+  const result = empty("google");
 
   const buckets = new Map<string, Bucket>();
   for (const record of input) {
@@ -173,8 +179,7 @@ export function parseClaudeExport(input: unknown): ImportResult {
   if (!Array.isArray(input)) {
     return empty("claude", "expected a conversations array");
   }
-  const result = empty("claude", "");
-  result.reason = null;
+  const result = empty("claude");
 
   const buckets = new Map<string, Bucket>();
   for (const conversation of input) {

@@ -157,3 +157,34 @@ describe("deletion tombstones (Codex P2, PR #8)", () => {
     expect(readTombstones()).toEqual([]);
   });
 });
+
+describe("authorship guard (self-review, PR #8)", () => {
+  it("recognizes a body DryDock wrote", () => {
+    const body = renderIssueBody({
+      id: "row-1",
+      description: "our description",
+      projectName: null,
+      source: "manual",
+    });
+    expect(idFromBody(body)).toBe("row-1");
+  });
+
+  it("does not claim a hand-written body", () => {
+    // The push gates on this: no breadcrumb means DryDock didn't author
+    // the issue, so replacing its body would destroy what the user
+    // wrote — in the same sync that imported it.
+    const handWritten =
+      "## Steps to reproduce\n\n1. Do the thing\n2. Watch it break\n";
+    expect(idFromBody(handWritten)).toBeNull();
+  });
+
+  it("does not match a DIFFERENT row's breadcrumb", () => {
+    const body = renderIssueBody({
+      id: "row-1",
+      description: null,
+      projectName: null,
+      source: "manual",
+    });
+    expect(idFromBody(body)).not.toBe("row-2");
+  });
+});
