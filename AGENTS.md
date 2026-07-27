@@ -216,6 +216,10 @@ docs/
 
 ## Workflow
 
+- **Don't `npm run build` while `npm run dev` is running.** The build rewrites `.next/` under the live server, which then 500s on every route with `Cannot find module './NNN.js'` — an error that points at webpack internals rather than at what you did. Stop the preview first, or verify the build after you're done with the browser. (The `launch` skill / preview tooling makes this easy to trip over, because the dev server outlives the task that started it.)
+- **A repo hook flags `.exec(` as `child_process.exec`.** It fires on `RegExp.prototype.exec` and better-sqlite3's `db.exec` too. Don't weaken the call to appease it — use `String.match()` for regexes and `db.prepare(sql).run()` for single statements, both of which are equivalent here and clearer anyway.
+
+
 ```bash
 npm install            # one-time
 npm run dev            # http://localhost:3000
