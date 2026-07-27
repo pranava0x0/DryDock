@@ -25,7 +25,7 @@ There are no API keys. Auth is delegated to the CLIs' own OAuth sessions on your
 | Per-task git worktree isolation | [lib/orchestrator/worktree.ts](lib/orchestrator/worktree.ts) |
 | Quality-gate (`npm test` after agent exits) | [lib/orchestrator/gate.ts](lib/orchestrator/gate.ts) |
 | Cost capture from `claude --output-format stream-json` | [lib/providers/claude-parse.ts](lib/providers/claude-parse.ts) |
-| Monthly budget rollup + threshold notifications | [lib/budget/rollup.ts](lib/budget/rollup.ts), [components/BudgetWidget.tsx](components/BudgetWidget.tsx) |
+| Provider usage tracking (Claude/Codex/Google) + usage-window budget pill | [lib/budget/window.ts](lib/budget/window.ts), [lib/providers/claude-usage.ts](lib/providers/claude-usage.ts), [lib/providers/codex-usage.ts](lib/providers/codex-usage.ts), [lib/providers/gemini-usage.ts](lib/providers/gemini-usage.ts), [components/BudgetWidget.tsx](components/BudgetWidget.tsx) |
 | `/discover` view of `~/Documents/Projects` | [app/discover/page.tsx](app/discover/page.tsx) |
 | Global cross-project backlog + Apple Notes sync | [app/backlog/page.tsx](app/backlog/page.tsx), [lib/integrations/apple-notes.ts](lib/integrations/apple-notes.ts) |
 | Project-doc viewer (read `issues.md` / `CLAUDE.md` etc per project) | [components/ProjectDocs.tsx](components/ProjectDocs.tsx) |
@@ -63,12 +63,12 @@ Two project-specific Claude Code skills live in [`.claude/skills/`](.claude/skil
 - [x] Kraken theme + anchor/crane motif
 - [x] `launch` + `drydock-uat` Claude Code skills
 - [x] Project discovery + per-project doc viewer
-- [x] Monthly budget rollup + threshold notifications
+- [x] Provider usage tracking (Claude/Codex/Google token & activity totals, calendar-month window) + optional manual API-credit balance
 - [x] Global backlog + bidirectional Apple Notes sync
 - [x] EP-1 — Front-door auth (Cloudflare Access / token, loopback bind), autonomy profiles, concurrency cap + queue, cancel
 - [x] EP-2 — Resumable task threads (session capture, follow-up turns via `claude --resume`, retry-with-feedback)
 
-The next epic (**EP-3 — close the git loop:** diff view → commit → push → PR/merge from the phone) and the full sequencing live in [docs/improvement-plan-2026-07.md](docs/improvement-plan-2026-07.md).
+The next epic (**EP-3 — close the git loop:** diff view → commit → push → PR/merge from the phone) and the full sequencing live in [docs/improvement-plan-2026-07.md](docs/improvement-plan-2026-07.md). The parallel telemetry/capture/linkage track (**EP-10…EP-15**: all-provider usage + subscription analytics, GitHub code-flow analytics, capture inbox, GitHub Issues mirror, MCP fleet linkage) lives in [docs/analytics-capture-plan-2026-07.md](docs/analytics-capture-plan-2026-07.md).
 
 Open items live in [drydock-backlog.md](drydock-backlog.md) and [issues.md](issues.md).
 

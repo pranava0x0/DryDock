@@ -130,9 +130,60 @@ function migrate(db: DB): void {
   // settings + backlog_items: covered by the CREATE TABLE IF NOT EXISTS
   // statements in schema.sql for fresh DBs. For databases that existed
   // before these tables were added, the IF NOT EXISTS makes the create
-  // safe to re-run, but a column-level migration is still a good belt
-  // for future renames — keep this list current as the schema evolves.
+  // safe to re-run, but a column-level migration is still needed for
+  // columns added to an existing table — keep this list current.
+  ensure(
+    "usage_daily",
+    "cache_write_tokens",
+    "cache_write_tokens INTEGER NOT NULL DEFAULT 0",
+  );
+  ensure("backlog_items", "triaged_at", "triaged_at INTEGER");
+  ensure("backlog_items", "raw_capture", "raw_capture TEXT");
+  ensure("backlog_items", "github_issue_ref", "github_issue_ref TEXT");
+
+  backfillTriagedAt(db);
 }
+
+/**
+ * One-time backfill for the inbox stage (EP-12).
+ *
+ * `triaged_at IS NULL` *means* "sitting in the inbox", so adding the
+ * column would have swept every existing backlog item into an inbox the
+ * user never put them in — a list they'd have to re-accept one by one to
+ * get back to where they started. Everything already in the backlog was
+ * implicitly triaged when it was added, so stamp it with its own
+ * creation time.
+ *
+ * Runs only where the column is still NULL, so it's idempotent and
+ * costs one indexed UPDATE on an already-migrated database. New rows
+ * created *after* this point legitimately arrive untriaged; they aren't
+ * affected because this only fires for rows that predate the column, and
+ * a re-run can't distinguish them — which is why the guard below checks
+ * for the column having *just* been added.
+ */
+function backfillTriagedAt(db: DB): void {
+  const already = db
+    .prepare(`SELECT value FROM settings WHERE key = ?`)
+    .get(TRIAGE_BACKFILL_KEY) as { value: string } | undefined;
+  if (already?.value === "done") return;
+
+  db.prepare(
+    `UPDATE backlog_items
+        SET triaged_at = created_at
+      WHERE triaged_at IS NULL`,
+  ).run();
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, 'done')
+     ON CONFLICT(key) DO UPDATE SET value = 'done'`,
+  ).run(TRIAGE_BACKFILL_KEY);
+}
+
+/**
+ * Marks the triage backfill as run. Without this the migration would
+ * re-stamp every genuinely-untriaged inbox row on the next process
+ * start, silently emptying the inbox into the trusted backlog.
+ */
+const TRIAGE_BACKFILL_KEY = "migration.backlog_triaged_at_backfilled";
 
 /**
  * Reset the cached connection. Tests call this between cases so each test

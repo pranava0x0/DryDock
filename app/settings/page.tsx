@@ -10,6 +10,9 @@ import {
   type RoutingRule,
 } from "@/lib/routing/rules";
 import type { ProviderName } from "@/lib/providers/types";
+import { SubscriptionEditor } from "@/components/SubscriptionEditor";
+import { InlineDisclosure } from "@/components/Disclosure";
+import { BacklogMirror } from "@/components/BacklogMirror";
 
 // Idle-backoff knobs for the Claude budget refresh. baseMs lines up with
 // the throttle gate's 1/min cap (so a backoff fire never gets blocked at
@@ -50,12 +53,22 @@ interface GeminiActivityWindow {
   conversations: number;
 }
 
+/** The `agy` CLI's separate SQLite store (DD-BL-38). */
+interface AntigravityCliReport {
+  health: "ok" | "no-data" | "unavailable";
+  reason: string | null;
+  databases: number;
+  events: number;
+  conversations: number;
+}
+
 interface GeminiUsageReport {
   weekly: GeminiActivityWindow;
   monthly: GeminiActivityWindow;
   latestActivityAt: string | null;
   conversationsScanned: number;
   generatedAt: string;
+  cli: AntigravityCliReport;
 }
 
 interface CodexUsageWindow {
@@ -261,6 +274,18 @@ function GoogleBudgetCard({
             Activity, not tokens — Google records no token counts locally.
           </p>
         </>
+      ) : null}
+      {/* The `agy` CLI keeps its own SQLite store, separate from the IDE
+          logs above. Only mentioned when it has something to say: an
+          "unavailable" chip on a machine that has never run the CLI would
+          be noise, but a CLI that IS installed and unreadable is exactly
+          the case the counts above would silently under-report. */}
+      {report?.cli && report.cli.databases > 0 ? (
+        <p className="mt-2 text-[11px] leading-snug text-kraken-shadow">
+          {report.cli.health === "ok"
+            ? `+ agy CLI: ${report.cli.events} step${report.cli.events === 1 ? "" : "s"} this week across ${report.cli.conversations} conversation${report.cli.conversations === 1 ? "" : "s"} (not included above).`
+            : `⚠ agy CLI store found but unreadable — ${report.cli.reason ?? "unknown reason"}. The counts above exclude it.`}
+        </p>
       ) : null}
     </>
   );
@@ -591,7 +616,7 @@ function RoutingRulesSection() {
               type="button"
               onClick={() => void saveRules(rules)}
               disabled={saving}
-              className="mt-3 inline-flex min-h-[36px] items-center rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50"
+              className="mt-3 inline-flex tap items-center rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50"
             >
               {saving ? "Saving…" : "Save changes"}
             </button>
@@ -601,7 +626,7 @@ function RoutingRulesSection() {
             <button
               type="button"
               onClick={() => setShowAdd(true)}
-              className="mt-3 inline-flex min-h-[36px] items-center rounded-md border border-kraken-boundless px-3 text-xs font-medium text-zinc-300 transition hover:bg-kraken-boundless/30"
+              className="mt-3 inline-flex tap items-center rounded-md border border-kraken-boundless px-3 text-xs font-medium text-zinc-300 transition hover:bg-kraken-boundless/30"
             >
               + Add rule
             </button>
@@ -614,7 +639,7 @@ function RoutingRulesSection() {
                   value={form.label}
                   onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
                   placeholder="Lint fixes"
-                  className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
+                  className="mt-1 block w-full tap rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
                 />
               </label>
               <label className="block text-xs">
@@ -624,7 +649,7 @@ function RoutingRulesSection() {
                   value={form.pattern}
                   onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
                   placeholder="fix lint"
-                  className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 font-mono text-xs text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
+                  className="mt-1 block w-full tap rounded-md border border-kraken-boundless bg-kraken-deep px-3 font-mono text-xs text-zinc-50 placeholder-zinc-600 focus:border-kraken-ice focus:outline-none"
                 />
               </label>
               <fieldset className="text-xs">
@@ -657,7 +682,7 @@ function RoutingRulesSection() {
                         model: null,
                       }))
                     }
-                    className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                    className="mt-1 block w-full tap rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
                   >
                     <option value="claude">Claude</option>
                     <option value="gemini">Gemini</option>
@@ -671,7 +696,7 @@ function RoutingRulesSection() {
                       onChange={(e) =>
                         setForm((f) => ({ ...f, model: e.target.value || null }))
                       }
-                      className="mt-1 block w-full min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                      className="mt-1 block w-full tap rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
                     >
                       <option value="">default</option>
                       {CLAUDE_MODELS.map((m) => (
@@ -687,7 +712,7 @@ function RoutingRulesSection() {
                 <button
                   type="button"
                   onClick={() => { setShowAdd(false); setForm(BLANK_FORM); }}
-                  className="flex-1 min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs font-medium text-zinc-300 transition hover:bg-kraken-boundless/30"
+                  className="flex-1 tap rounded-md border border-kraken-boundless px-3 text-xs font-medium text-zinc-300 transition hover:bg-kraken-boundless/30"
                 >
                   Cancel
                 </button>
@@ -695,7 +720,7 @@ function RoutingRulesSection() {
                   type="button"
                   onClick={() => void addRule()}
                   disabled={saving || !form.label.trim() || !form.pattern.trim()}
-                  className="flex-1 min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 tap rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving ? "Adding…" : "Add"}
                 </button>
@@ -884,7 +909,7 @@ export default function SettingsPage() {
         </h1>
         <Link
           href="/"
-          className="text-xs text-kraken-ice underline-offset-2 transition hover:underline"
+          className="tap inline-flex items-center text-xs text-kraken-ice underline-offset-2 transition hover:underline"
         >
           ← Dashboard
         </Link>
@@ -917,16 +942,27 @@ export default function SettingsPage() {
                 <span className="block text-sm font-medium text-zinc-100">
                   Auto-clean worktrees on success
                 </span>
+                {/* The one-liner stays visible; the reasoning you read
+                    once and never again goes behind a disclosure. Settings
+                    was 1.3 phone-screens of mostly-prose. */}
                 <span
                   id="auto-cleanup-help"
                   className="mt-1 block text-xs text-kraken-shadow"
                 >
-                  Removes the per-task git worktree after the agent succeeds (and
-                  the quality gate passes, when configured). The branch itself
-                  survives, so you can still <code>git checkout</code> it later.
-                  On by default — turn it off if you usually inspect agent
-                  changes in the worktree before merging.
+                  Removes the per-task worktree once the agent succeeds.
                 </span>
+                <InlineDisclosure label="When would I turn this off?">
+                  <p>
+                    The branch itself always survives, so you can{" "}
+                    <code>git checkout</code> the work later either way —
+                    cleanup only removes the checked-out directory.
+                  </p>
+                  <p>
+                    Turn it off if you habitually inspect the agent&apos;s
+                    changes in the worktree before merging. The gate still has
+                    to pass before anything is cleaned up.
+                  </p>
+                </InlineDisclosure>
                 {status ? (
                   <span className="mt-2 block text-xs text-kraken-ice">{status}</span>
                 ) : null}
@@ -940,10 +976,21 @@ export default function SettingsPage() {
                 Max concurrent agent runs
               </span>
               <span className="mt-1 block text-xs text-kraken-shadow">
-                Tasks beyond this cap queue up and start automatically as
-                running tasks finish. Each run is one CLI subprocess in its
-                own worktree.
+                Tasks beyond the cap queue and start as slots free up.
               </span>
+              <InlineDisclosure label="What does one run cost me?">
+                <p>
+                  Each run is one CLI subprocess in its own git worktree —
+                  its own checkout, its own branch, its own token spend.
+                  Three concurrent agents are three sets of tokens burning
+                  at once.
+                </p>
+                <p>
+                  The cap is enforced in the database, not in this button, so
+                  two taps can&apos;t both squeeze past it. Queued tasks
+                  survive a restart.
+                </p>
+              </InlineDisclosure>
               <input
                 type="number"
                 min={1}
@@ -969,11 +1016,25 @@ export default function SettingsPage() {
               Provider budgets
             </h2>
             <p className="mt-1 text-xs text-kraken-shadow">
-              Claude and OpenAI Codex read token usage from their local CLI
-              session logs; Google AI shows local Antigravity activity (turns,
-              not tokens). Cards show &ldquo;no data yet&rdquo; for a tool you
-              haven&apos;t run locally.
+              Read from local CLI logs — nothing leaves this Mac.
             </p>
+            <InlineDisclosure label="Where do these numbers come from?">
+              <p>
+                Claude and Codex log every turn&apos;s token counts locally as
+                they run, so these are real numbers rather than estimates.
+              </p>
+              <p>
+                Google is different: Antigravity records no token counts
+                anywhere on disk, so its card shows{" "}
+                <strong className="text-zinc-300">activity</strong> — prompts,
+                turns, tool calls — and never pretends to a token figure.
+              </p>
+              <p>
+                A card reading &ldquo;no data yet&rdquo; means that tool has
+                not run on this Mac, which is different from having used it
+                and spent nothing.
+              </p>
+            </InlineDisclosure>
             <ul className="mt-3 space-y-2">
               {PROVIDER_BUDGET_LINKS.map((p) => {
                 if (p.key === "claude") {
@@ -1018,7 +1079,10 @@ export default function SettingsPage() {
                 );
               })}
             </ul>
+            <SubscriptionEditor />
           </div>
+
+          <BacklogMirror />
         </div>
       )}
     </section>

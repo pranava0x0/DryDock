@@ -4,8 +4,17 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { SyncStatus } from "@/components/SyncStatus";
 import { useAutoSync } from "@/components/useAutoSync";
+import { InboxPanel } from "@/components/InboxPanel";
+import { GithubWorkPanel } from "@/components/GithubWorkPanel";
+import { QuickAdd } from "@/components/QuickAdd";
+import { InlineDisclosure } from "@/components/Disclosure";
 
-type BacklogStatus = "idea" | "in_progress" | "done" | "dropped";
+type BacklogStatus =
+  | "idea"
+  | "in_progress"
+  | "done"
+  | "dropped"
+  | "proposed";
 
 interface BacklogItem {
   id: string;
@@ -14,9 +23,12 @@ interface BacklogItem {
   project_id: string | null;
   status: BacklogStatus;
   priority: number;
-  source: "manual" | "apple-notes";
+  source: string;
   external_id: string | null;
   task_id: string | null;
+  triaged_at: number | null;
+  raw_capture: string | null;
+  github_issue_ref: string | null;
   created_at: number;
   updated_at: number;
   completed_at: number | null;
@@ -33,6 +45,7 @@ const STATUS_LABELS: Record<BacklogStatus, string> = {
   in_progress: "In progress",
   done: "Done",
   dropped: "Dropped",
+  proposed: "Proposed",
 };
 
 const STATUS_FILTERS: Array<BacklogStatus | "all"> = [
@@ -74,8 +87,8 @@ export default function BacklogPage() {
       const [itemsRes, projectsRes] = await Promise.all([
         fetch(
           filter === "all"
-            ? "/api/backlog"
-            : `/api/backlog?status=${filter}`,
+            ? "/api/backlog?stage=triaged"
+            : `/api/backlog?status=${filter}&stage=triaged`,
         ),
         fetch("/api/projects"),
       ]);
@@ -259,36 +272,49 @@ export default function BacklogPage() {
     <>
       <Link
         href="/"
-        className="text-sm text-zinc-400 transition hover:text-zinc-200"
+        className="tap inline-flex items-center text-sm text-zinc-400 transition hover:text-zinc-200"
       >
         ← Back to projects
       </Link>
-      <header className="mt-3 mb-4 flex items-start justify-between gap-3">
-        <div>
+      {/* At 375px the old header gave three lines of explanatory prose the
+          same weight as the list itself, and squeezed "Sync Notes" into a
+          column narrow enough to wrap it onto three lines. The title and
+          the sync control share one row now; the explanation is one tap
+          away for the one time anyone needs it. */}
+      <header className="mb-3 mt-3">
+        <div className="flex items-center justify-between gap-2">
           <h1 className="text-xl font-semibold tracking-tight text-zinc-50">
             Backlog
           </h1>
-          <p className="mt-1 text-sm text-kraken-shadow">
-            Cross-project ideas. Assign one to a project, then burn down to
-            dispatch as a task. Syncs with the &ldquo;DryDock Backlog&rdquo;
-            Apple Note.
+          <div className="flex shrink-0 items-center gap-2">
+            <SyncStatus
+              syncing={syncing}
+              lastSyncedAt={lastSyncedAt}
+              error={syncError}
+            />
+            <button
+              type="button"
+              onClick={() => void handleSync()}
+              disabled={busy || syncing}
+              aria-label="Sync with Apple Notes"
+              className="inline-flex min-h-[44px] shrink-0 items-center whitespace-nowrap rounded-md border border-kraken-boundless px-3 text-sm text-zinc-200 transition hover:bg-kraken-boundless/30 disabled:opacity-50"
+            >
+              ↻ Notes
+            </button>
+          </div>
+        </div>
+        <InlineDisclosure label="How does this list work?">
+          <p>
+            Cross-project ideas. Assign one to a project, then{" "}
+            <strong className="text-zinc-300">burn down</strong> to turn it
+            into a real task you can dispatch.
           </p>
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          <button
-            type="button"
-            onClick={() => void handleSync()}
-            disabled={busy || syncing}
-            className="inline-flex min-h-[44px] items-center rounded-md border border-kraken-boundless px-3 text-sm text-zinc-200 transition hover:bg-kraken-boundless/30 disabled:opacity-50"
-          >
-            ↻ Sync Notes
-          </button>
-          <SyncStatus
-            syncing={syncing}
-            lastSyncedAt={lastSyncedAt}
-            error={syncError}
-          />
-        </div>
+          <p>
+            Accepted items sync both ways with the &ldquo;⚓ DryDock
+            Backlog&rdquo; Apple Note. Inbox items don&apos;t — they only
+            reach the Note once you accept them.
+          </p>
+        </InlineDisclosure>
       </header>
 
       {error ? (
@@ -300,9 +326,23 @@ export default function BacklogPage() {
         </p>
       ) : null}
 
+      {/* The full form is the deliberate-planning path; the ⊕ button is
+          the hurried-capture one. Collapsed because the quick path covers
+          the common case, and two always-visible add controls on one
+          screen is a choice the user has to make before they can type. */}
+      <details className="group mb-3 [&_summary::-webkit-details-marker]:hidden">
+        <summary className="inline-flex tap cursor-pointer list-none items-center gap-1 text-xs text-kraken-ice underline-offset-2 hover:underline">
+          <span
+            aria-hidden="true"
+            className="text-[9px] transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none"
+          >
+            ▶
+          </span>
+          Add with a project
+        </summary>
       <form
         onSubmit={handleCreate}
-        className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-stretch"
+        className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-stretch"
       >
         <input
           type="text"
@@ -333,14 +373,29 @@ export default function BacklogPage() {
           Add
         </button>
       </form>
+      </details>
 
+      {/*
+        Below `lg`, inbox and GitHub stack above the list — on a phone,
+        "what needs deciding" and "what's already in flight" both outrank
+        browsing the backlog. From `lg` up they move into a sticky right
+        rail, so the list keeps the reading column and the triage surface
+        stays on screen while you scroll it.
+      */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-6">
+        <aside className="min-w-0 lg:order-2 lg:self-start lg:sticky lg:top-[4.5rem]">
+          <InboxPanel projects={projects} onChange={() => void refresh()} />
+          <GithubWorkPanel onChange={() => void refresh()} />
+        </aside>
+
+        <div className="min-w-0 lg:order-1">
       <div className="mb-3 flex flex-wrap gap-2">
         {STATUS_FILTERS.map((s) => (
           <button
             key={s}
             type="button"
             onClick={() => setFilter(s)}
-            className={`min-h-[36px] rounded-full px-3 text-xs font-medium transition ${
+            className={`tap rounded-full px-3 text-xs font-medium transition ${
               filter === s
                 ? "bg-kraken-ice text-kraken-deep"
                 : "border border-kraken-boundless text-zinc-300 hover:bg-kraken-boundless/30"
@@ -424,6 +479,18 @@ export default function BacklogPage() {
                             task ↗
                           </Link>
                         ) : null}
+                        {/* The whole visible cost of the GitHub mirror:
+                            one link out per row. */}
+                        {item.github_issue_ref ? (
+                          <a
+                            href={`https://github.com/${item.github_issue_ref.replace("#", "/issues/")}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-kraken-ice underline-offset-2 hover:underline"
+                          >
+                            {item.github_issue_ref.split("/").pop()} ↗
+                          </a>
+                        ) : null}
                       </div>
                     </>
                   )}
@@ -437,7 +504,7 @@ export default function BacklogPage() {
                       type="button"
                       onClick={() => void saveEdit(item)}
                       disabled={busy || editTitle.trim() === ""}
-                      className="min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="tap rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Save
                     </button>
@@ -445,7 +512,7 @@ export default function BacklogPage() {
                       type="button"
                       onClick={cancelEdit}
                       disabled={busy}
-                      className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
+                      className="tap rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
                     >
                       Cancel
                     </button>
@@ -456,7 +523,7 @@ export default function BacklogPage() {
                       value={item.project_id ?? ""}
                       onChange={(e) => handleAssign(item, e.target.value)}
                       disabled={busy}
-                      className="min-h-[36px] rounded-md border border-kraken-boundless bg-kraken-deep px-2 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                      className="tap rounded-md border border-kraken-boundless bg-kraken-deep px-2 text-xs text-zinc-50 focus:border-kraken-ice focus:outline-none"
                       aria-label="Assign project"
                     >
                       <option value="">Unassigned</option>
@@ -476,7 +543,7 @@ export default function BacklogPage() {
                             ? "Create a task in the assigned project"
                             : "Assign a project first"
                         }
-                        className="min-h-[36px] rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="tap rounded-md bg-kraken-ice px-3 text-xs font-semibold text-kraken-deep transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         🔥 Burn down
                       </button>
@@ -486,7 +553,7 @@ export default function BacklogPage() {
                         type="button"
                         onClick={() => handleStatus(item, "done")}
                         disabled={busy}
-                        className="min-h-[36px] rounded-md border border-emerald-500/40 px-3 text-xs text-emerald-300 transition hover:bg-emerald-500/10"
+                        className="tap rounded-md border border-emerald-500/40 px-3 text-xs text-emerald-300 transition hover:bg-emerald-500/10"
                       >
                         Mark done
                       </button>
@@ -495,7 +562,7 @@ export default function BacklogPage() {
                       type="button"
                       onClick={() => startEdit(item)}
                       disabled={busy}
-                      className="min-h-[36px] rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
+                      className="tap rounded-md border border-kraken-boundless px-3 text-xs text-zinc-300 transition hover:bg-kraken-boundless/30"
                       aria-label="Edit item"
                     >
                       ✏️ Edit
@@ -504,7 +571,7 @@ export default function BacklogPage() {
                       type="button"
                       onClick={() => handleDelete(item)}
                       disabled={busy}
-                      className="ml-auto min-h-[36px] rounded-md px-2 text-base text-zinc-500 transition hover:text-kraken-alert"
+                      className="ml-auto tap rounded-md px-2 text-base text-zinc-500 transition hover:text-kraken-alert"
                       aria-label="Delete item"
                       title="Delete this item permanently."
                     >
@@ -517,6 +584,10 @@ export default function BacklogPage() {
           ))}
         </ul>
       )}
+        </div>
+      </div>
+
+      <QuickAdd onAdded={() => void refresh()} />
     </>
   );
 }

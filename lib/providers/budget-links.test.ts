@@ -26,4 +26,30 @@ describe("PROVIDER_BUDGET_LINKS", () => {
   it.each(PROVIDER_BUDGET_LINKS)("$key: label is non-empty", (entry) => {
     expect(entry.label.trim().length).toBeGreaterThan(0);
   });
+
+  // DD-BL-37. Every link originally pointed at its provider's *API*
+  // console, which is a different product from the subscription the card
+  // reports on — so "check my usage" landed on a page showing zero. Pin
+  // the consumer targets exactly; a drift back to a developer console is
+  // a silent wrong answer, not a cosmetic change.
+  it("points at consumer surfaces, not developer/API consoles", () => {
+    const byKey = Object.fromEntries(
+      PROVIDER_BUDGET_LINKS.map((e) => [e.key, e.url]),
+    );
+    expect(byKey.claude).toBe("https://claude.ai/settings/usage");
+    expect(byKey.codex).toBe("https://chatgpt.com/codex/settings/usage");
+    expect(byKey.google).toBe("https://one.google.com/settings");
+  });
+
+  it.each(PROVIDER_BUDGET_LINKS)(
+    "$key: url is not an API/developer console",
+    (entry) => {
+      // The specific hosts that burned us. Kept as a separate assertion
+      // from the exact-URL pin above so the failure message names the
+      // actual mistake if someone edits a path and reintroduces one.
+      expect(entry.url).not.toMatch(
+        /console\.anthropic\.com|platform\.claude\.com|platform\.openai\.com/,
+      );
+    },
+  );
 });

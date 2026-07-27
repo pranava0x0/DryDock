@@ -15,14 +15,26 @@ import { readCodexUsage } from "./codex-usage";
  * compare against when this was written.
  */
 
+/** Stands in for `~/.codex`. */
+let codexHome: string;
+/** Stands in for `~/.codex/sessions` — what the reader is pointed at. */
 let root: string;
+/** Stands in for `~/.codex/archived_sessions` — the reader derives this. */
+let archived: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "drydock-codex-usage-"));
+  // The reader derives the archive root as a *sibling* of the sessions
+  // root, so the fixture has to mirror the real `~/.codex` layout — a
+  // bare mkdtemp would make the sibling `$TMPDIR/archived_sessions`,
+  // which is shared state between runs.
+  codexHome = mkdtempSync(join(tmpdir(), "drydock-codex-usage-"));
+  root = join(codexHome, "sessions");
+  archived = join(codexHome, "archived_sessions");
+  mkdirSync(root, { recursive: true });
 });
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  rmSync(codexHome, { recursive: true, force: true });
 });
 
 const FIXED_NOW = new Date("2026-05-16T12:00:00.000Z");
@@ -83,6 +95,13 @@ function writeRollout(
     ...turns.map(tokenCountLine),
   ];
   writeFileSync(join(dir, fileName), lines.join("\n") + "\n");
+}
+
+/** Same, but into the flat `archived_sessions/` sibling (post-`/archive`). */
+function writeArchived(fileName: string, turns: TurnFixture[]): void {
+  mkdirSync(archived, { recursive: true });
+  const lines = turns.map(tokenCountLine);
+  writeFileSync(join(archived, fileName), lines.join("\n") + "\n");
 }
 
 describe("readCodexUsage", () => {
@@ -208,5 +227,75 @@ describe("readCodexUsage", () => {
     expect(report.monthly.sessions).toBe(1);
     expect(report.weekly.totalTokens).toBe(20);
     expect(report.monthly.totalTokens).toBe(30);
+  });
+
+  // ── DD-BL-38: archived sessions ────────────────────────────────────
+  // `/archive` MOVES a rollout out of sessions/YYYY/MM/DD into the flat
+  // ~/.codex/archived_sessions. Reading only `sessions/` silently dropped
+  // that work from every total (the ccusage PR #849 bug).
+
+  it("counts sessions the user archived (flat archived_sessions dir)", async () => {
+    writeRollout(["2026", "05", "15"], "rollout-live.jsonl", [
+      { timestamp: "2026-05-15T10:00:00.000Z", input: 100, total: 100 },
+    ]);
+    writeArchived("rollout-old.jsonl", [
+      { timestamp: "2026-05-15T11:00:00.000Z", input: 7, total: 7 },
+    ]);
+
+    const report = await readCodexUsage(root, FIXED_NOW);
+    expect(report.weekly.inputTokens).toBe(107);
+    expect(report.weekly.sessions).toBe(2);
+    expect(report.filesScanned).toBe(2);
+  });
+
+  it("reads the archive even when sessions/ was never created", async () => {
+    rmSync(root, { recursive: true, force: true });
+    writeArchived("rollout-only.jsonl", [
+      { timestamp: "2026-05-15T10:00:00.000Z", input: 5, total: 5 },
+    ]);
+
+    const report = await readCodexUsage(root, FIXED_NOW);
+    expect(report.weekly.inputTokens).toBe(5);
+    expect(report.weekly.sessions).toBe(1);
+  });
+
+  it("counts a rollout present in both roots once, preferring the live copy", async () => {
+    // A rollout keeps its `rollout-<ISO>-<uuid>` name across the move, and
+    // the archive is flat — so the relative paths differ and only the
+    // embedded UUID can pair them. If a crash ever leaves both copies
+    // behind, the session must not count twice.
+    const name =
+      "rollout-2026-05-15T10-00-00-019e534c-9110-7fb3-9ea8-dda00a24fd0c.jsonl";
+    writeRollout(["2026", "05", "15"], name, [
+      { timestamp: "2026-05-15T10:00:00.000Z", input: 100, total: 100 },
+    ]);
+    writeArchived(name, [
+      // Deliberately different numbers: if the archived copy is the one
+      // that gets read, the assertion below fails loudly instead of
+      // quietly double-counting.
+      { timestamp: "2026-05-15T10:00:00.000Z", input: 999, total: 999 },
+    ]);
+
+    const report = await readCodexUsage(root, FIXED_NOW);
+    expect(report.weekly.sessions).toBe(1);
+    expect(report.weekly.inputTokens).toBe(100);
+    expect(report.filesScanned).toBe(1);
+  });
+
+  it("keeps distinct non-rollout filenames separate (no basename collapse)", async () => {
+    // The dedup key falls back to a root-relative path for anything that
+    // isn't a `rollout-…-<uuid>.jsonl`. Two same-named files in different
+    // roots are then two sessions — collapsing them on basename alone
+    // would silently drop real usage.
+    writeRollout(["2026", "05", "15"], "notes.jsonl", [
+      { timestamp: "2026-05-15T10:00:00.000Z", input: 3, total: 3 },
+    ]);
+    writeArchived("notes.jsonl", [
+      { timestamp: "2026-05-15T10:30:00.000Z", input: 4, total: 4 },
+    ]);
+
+    const report = await readCodexUsage(root, FIXED_NOW);
+    expect(report.weekly.sessions).toBe(2);
+    expect(report.weekly.inputTokens).toBe(7);
   });
 });

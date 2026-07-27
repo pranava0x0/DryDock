@@ -249,7 +249,7 @@ Three lines of defense, in order:
 
 1. **Project path that doesn't exist** — Best. The `claude` / `gemini` CLI fails before contacting the model. We use `/tmp/uat-smoke` which we don't create.
 2. **`claude` / `gemini` not on PATH** — Backup. The dispatcher catches the ENOENT and emits a clean stderr + exit.
-3. **Provider stub via env var** — Not yet wired. If you ever need to force a stub provider in dev, add a `DRYDOCK_PROVIDER_STUB=1` env var path in [lib/providers/index.ts](lib/providers/index.ts) and document it here. This is a backlog item.
+3. **Provider stub via env var** — set `DRYDOCK_PROVIDER_STUB=1` (and optionally `DRYDOCK_PROVIDER_STUB_DELAY_MS=10000`) before `npm run dev`; every dispatch resolves to the no-op stub in [lib/providers/index.ts](lib/providers/index.ts) (abort-aware delay, so cancel is observable). Prefer this over paths (1)/(2) when you need to observe queued/running/Stop states, not just a fast failure.
 
 **Never** point the UAT project at a real local repo and click Run. That's a real dispatch.
 

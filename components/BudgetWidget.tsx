@@ -192,7 +192,7 @@ export function BudgetWidget() {
           setDraft(credits?.toString() ?? "");
           setEditing(true);
         }}
-        className="inline-flex items-center gap-2 rounded-full border border-kraken-boundless bg-kraken-surface px-3 py-1 text-xs text-zinc-200 transition hover:border-kraken-ice/60"
+        className="tap inline-flex items-center gap-2 rounded-full border border-kraken-boundless bg-kraken-surface px-3 py-1 text-xs text-zinc-200 transition hover:border-kraken-ice/60"
         aria-label={`${win.elapsedPct.toFixed(0)}% of ${monthLabel} elapsed, ${formatCountdown(win.secondsUntilReset)} left, ${compact.format(totalTok)} tokens used`}
       >
         <span className="font-mono text-zinc-100">{win.elapsedPct.toFixed(0)}%</span>

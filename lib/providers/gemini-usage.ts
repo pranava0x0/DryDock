@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { mayContainRecentTurns, widestCutoff } from "./usage-mtime";
+import {
+  readAntigravityCliActivity,
+  type AntigravityCliReport,
+} from "./antigravity-cli";
 
 /**
  * Google AI (Antigravity) activity reader.
@@ -25,8 +29,12 @@ import { mayContainRecentTurns, widestCutoff } from "./usage-mtime";
  * AI locally", so we surface counts — user prompts, model turns, tool
  * calls — windowed the same way the Claude card windows tokens.
  *
- * Privacy: we only read `source`, `type`, `created_at`, and the *length*
- * of `tool_calls`. Message `content` / `thinking` is never read or returned.
+ * Privacy: the reader `JSON.parse`s each line, so message `content` /
+ * `thinking` does pass through memory — but only `source`, `type`,
+ * `created_at`, and the *length* of `tool_calls` are ever inspected,
+ * aggregated, stored, or returned. Stated this way deliberately: the
+ * older "content is never read" phrasing promised privacy reviewers a
+ * stronger guarantee than the code delivers (Codex, PR #8).
  */
 
 export interface GeminiActivityWindow {
@@ -51,6 +59,13 @@ export interface GeminiUsageReport {
   conversationsScanned: number;
   /** Captured at end of aggregation so callers can show "fresh as of …". */
   generatedAt: string;
+  /**
+   * The `agy` CLI's separate SQLite store (DD-BL-38). Reported alongside
+   * — not merged into — the IDE windows above, because its schema is
+   * unverified and its health may be `unavailable` while the IDE numbers
+   * are perfectly good. Merging would hide that distinction.
+   */
+  cli: AntigravityCliReport;
 }
 
 const empty = (): GeminiActivityWindow => ({
@@ -67,6 +82,11 @@ const empty = (): GeminiActivityWindow => ({
 export async function readGeminiUsage(
   rootDir: string = join(homedir(), ".gemini", "antigravity", "brain"),
   now: Date = new Date(),
+  // Absolute rather than derived from `rootDir`: the CLI store is not a
+  // sibling of the IDE's brain dir, and deriving it by walking up two
+  // levels from a fixture path would have tests reading whatever happens
+  // to sit next to the OS temp directory.
+  cliDir: string = join(homedir(), ".gemini", "antigravity-cli"),
 ): Promise<GeminiUsageReport> {
   const weeklyCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   // Build the monthly cutoff in UTC so it lines up with the ISO timestamps
@@ -85,13 +105,17 @@ export async function readGeminiUsage(
   let latestActivityAt: string | null = null;
   let conversationsScanned = 0;
 
+  // The CLI store is independent of the IDE walk — probe it either way so
+  // a CLI-only user isn't reported as having zero activity.
+  const cli = await readAntigravityCliActivity(cliDir, weeklyCutoff);
+
   let convDirs: string[] = [];
   try {
     convDirs = await fs.readdir(rootDir);
   } catch {
     // No ~/.gemini/antigravity/brain yet (Antigravity never run on this
     // machine). Return zeros — UI surfaces "no activity yet" cleanly.
-    return finalize(weekly, monthly, latestActivityAt, conversationsScanned);
+    return finalize(weekly, monthly, latestActivityAt, conversationsScanned, cli);
   }
 
   for (const conv of convDirs) {
@@ -129,7 +153,7 @@ export async function readGeminiUsage(
   weekly.conversations = weeklyConversations.size;
   monthly.conversations = monthlyConversations.size;
 
-  return finalize(weekly, monthly, latestActivityAt, conversationsScanned);
+  return finalize(weekly, monthly, latestActivityAt, conversationsScanned, cli);
 }
 
 function finalize(
@@ -137,6 +161,7 @@ function finalize(
   monthly: GeminiActivityWindow,
   latestActivityAt: string | null,
   conversationsScanned: number,
+  cli: AntigravityCliReport,
 ): GeminiUsageReport {
   return {
     weekly,
@@ -144,6 +169,7 @@ function finalize(
     latestActivityAt,
     conversationsScanned,
     generatedAt: new Date().toISOString(),
+    cli,
   };
 }
 

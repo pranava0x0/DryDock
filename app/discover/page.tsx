@@ -85,7 +85,7 @@ export default function DiscoverPage() {
     <>
       <Link
         href="/"
-        className="text-sm text-zinc-400 transition hover:text-zinc-200"
+        className="tap inline-flex items-center text-sm text-zinc-400 transition hover:text-zinc-200"
       >
         ← Back to projects
       </Link>

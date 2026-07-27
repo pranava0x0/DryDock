@@ -1,0 +1,40 @@
+# DD-BL-36. Dependabot config lives in the repo so the policy is reviewable
+# and versioned; the *alerts* toggle is a repo setting and has to be flipped
+# once by hand (see drydock-backlog.md).
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      # Weekly, not daily: DryDock has one maintainer, and a daily PR
+      # stream is how a security-update habit dies. Vercel pre-announces
+      # each Next.js security batch about a week ahead, so a weekly sweep
+      # never lags a batch by more than a few days.
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    # Malicious npm versions are usually caught and unpublished within
+    # hours-to-days. Waiting 3 days before proposing an upgrade puts the
+    # community's detection window in front of this repo — the single
+    # highest-leverage setting per vibe-coding-security's npm-hardening.
+    cooldown:
+      default-days: 3
+    groups:
+      # One PR for the routine churn. Security upgrades are deliberately
+      # NOT grouped — those want their own reviewable PR.
+      dev-dependencies:
+        dependency-type: "development"
+        update-types: ["minor", "patch"]
+    ignore:
+      # `next` is exact-pinned on purpose (DD-016): security batches are a
+      # deliberate upgrade with a full test + build + auth re-verification,
+      # not a version bump that rides in with the weekly noise. Dependabot
+      # *alerts* still surface Next.js CVEs; this only stops it from
+      # opening routine version PRs.
+      - dependency-name: "next"
+        update-types:
+          ["version-update:semver-major", "version-update:semver-minor"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"

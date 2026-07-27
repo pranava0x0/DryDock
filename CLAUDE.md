@@ -1,6 +1,6 @@
 # DryDock — Project Notes
 
-> This file extends the [universal CLAUDE.md](../CLAUDE.md) with DryDock-specific working agreements. The universal principles apply by default; the items below override or specialize them for DryDock. When the universal file conflicts with [AGENTS.md](AGENTS.md), AGENTS.md wins — it's the local source of truth.
+> This file extends the [universal CLAUDE.md](../coding-best-practices/CLAUDE.md) with DryDock-specific working agreements. The universal principles apply by default; the items below override or specialize them for DryDock. When the universal file conflicts with [AGENTS.md](AGENTS.md), AGENTS.md wins — it's the local source of truth.
 
 This directory is the [DryDock orchestrator](README.md) — all three phases shipped 2026-05-12, followed by Apple Notes hardening + auto-sync + edit-in-place + cross-project running-tasks panel + opt-in worktree GC + gate-output replay in May 2026 (see [drydock-backlog.md](drydock-backlog.md)).
 
@@ -8,8 +8,8 @@ This directory is the [DryDock orchestrator](README.md) — all three phases shi
 - **Visual system** (colors, spacing, touch targets, icon set): [design.md](design.md)
 - **Active bugs / fixed bugs**: [issues.md](issues.md) — every Apple Notes failure mode (`-10000`, `-1728`, non-deterministic enumeration, body-vs-name mismatch, add-then-sync duplication) has its own DD-### entry. Cross-reference before touching that code path.
 - **Product backlog** (DryDock-specific): [drydock-backlog.md](drydock-backlog.md). The portfolio-level [`../BACKLOG.md`](../BACKLOG.md) is unrelated cross-project work.
-- **Supply-chain advisory log**: [`pranava0x0/vibe-coding-security`](https://github.com/pranava0x0/vibe-coding-security) (a local `../security.md` was referenced before but doesn't exist; this repo is the live source). **Read before any `npm install` / `pip install` / dep upgrade** — cross-check the lockfile against the relevant `advisories/*.md` and follow `prevention/npm-hardening.md` (install with `npm ci --ignore-scripts`).
-- **Local dev:** `npm run dev` from this directory. The dev launch config is `drydock-dev` in [`../.claude/launch.json`](../.claude/launch.json) — or just type "launch" in a Claude Code session.
+- **Supply-chain advisory log**: [`pranava0x0/vibe-coding-security`](https://github.com/pranava0x0/vibe-coding-security) (a local `../security.md` was referenced before but doesn't exist; this repo is the live source). **Read before any `npm install` / `pip install` / dep upgrade** — fetch the machine-readable index at `https://pranava0x0.github.io/vibe-coding-security/llms-ctx.txt` (~12 KB), cross-check the lockfile against the relevant `advisories/*.md`, and follow `prevention/npm-hardening.md` (install with `npm ci --ignore-scripts`). Don't re-fetch for routine edits/reads — only before a new project, a dependency add/upgrade, a new CDN asset/GitHub Action, or a fetched install script.
+- **Local dev:** `npm run dev` from this directory. The dev launch config is `drydock-dev` in [`.claude/launch.json`](.claude/launch.json) — or just type "launch" in a Claude Code session.
 - **Setup checklist** (Cloudflare Tunnel + CLI auth + Apple Notes): [docs/setup.md](docs/setup.md).
 
 ## DryDock-specific working agreements (overrides on top of the universal CLAUDE.md)

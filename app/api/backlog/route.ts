@@ -3,6 +3,7 @@ import {
   BACKLOG_STATUSES,
   type BacklogStatus,
   createBacklogItem,
+  inboxCount,
   listBacklog,
 } from "@/lib/db/backlog";
 import { lineId } from "@/lib/integrations/apple-notes";
@@ -15,6 +16,17 @@ export async function GET(request: NextRequest): Promise<Response> {
   const url = new URL(request.url);
   const statusParam = url.searchParams.get("status");
   const projectIdParam = url.searchParams.get("projectId");
+  const stageParam = url.searchParams.get("stage");
+
+  // The default is "triaged", not "everything". The inbox exists so raw
+  // captures don't pollute the list the user trusts, and a caller that
+  // forgot to filter would quietly undo that.
+  let stage: "inbox" | "triaged" | undefined = "triaged";
+  if (stageParam === "inbox") stage = "inbox";
+  else if (stageParam === "all") stage = undefined;
+  else if (stageParam !== null && stageParam !== "triaged") {
+    return badRequest("`stage` must be one of: inbox, triaged, all");
+  }
 
   let status: BacklogStatus | undefined;
   if (statusParam) {
@@ -30,8 +42,9 @@ export async function GET(request: NextRequest): Promise<Response> {
     const items = listBacklog({
       status,
       projectId: projectIdParam ?? undefined,
+      stage,
     });
-    return ok({ items });
+    return ok({ items, inboxCount: inboxCount() });
   } catch (err) {
     return serverError((err as Error).message);
   }
