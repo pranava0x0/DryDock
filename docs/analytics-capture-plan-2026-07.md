@@ -2,7 +2,7 @@
 
 > **Companion track to [improvement-plan-2026-07.md](improvement-plan-2026-07.md).** That plan's spine (EP-3 close the git loop → EP-4/5 triage + notifications) remains the product's top priority. This document adds a parallel track — **EP-10…EP-15** — covering four new feature families the base plan didn't scope: all-provider AI usage + subscription analytics, GitHub code-flow analytics, frictionless capture + durable backlog tracking, and linking the Daily Briefing / idea-generation satellites into DryDock. The two tracks are deliberately module-disjoint so they can interleave.
 >
-> **Status (2026-07-26): partially shipped — see the implementation log at the end of this file.** Phase 0, EP-10 (all four specs), EP-11, and EP-12 Spec A/B are on `jam/vigilant-rubin-bcf209` (PR #8). EP-12 Spec C (iMessage), EP-13's push half, EP-14, and EP-15 remain.
+> **Status (2026-07-26): the whole track is shipped on `jam/vigilant-rubin-bcf209` (PR #8) — see the implementation log at the end of this file.** Phase 0 and EP-10 through EP-15 are all implemented, with 655 tests. What remains is genuinely outside this repo: the Daily Briefing job's own prose/delivery half (EP-14 C's consumer) and EP-15 Spec C's receipt parsing, which needs a Gmail surface that lives in that job rather than in DryDock.
 >
 > **Original status (2026-07-25):** planned. Research-grounded: live-verified GitHub GraphQL queries, on-disk inspection of all three providers' local logs, four web-research sweeps, and the full codebase inventory. Written on branch `jam/ai-usage-analytics-dashboard-c5041f`.
 
@@ -381,6 +381,12 @@ produced a wrong number.
 | **EP-10 Spec D** | `quota_snapshots`, the Codex app-server client, the Claude stats-cache probe. Both report `unavailable` here — see below. |
 | **EP-11** | `lib/insights/attribution.ts`, `lib/connectors/git-flow.ts`, `/api/flow`, the Flow tab. |
 | **EP-12 Spec A/B** | Inbox stage, `capture.ts` + `intake.ts`, `POST /api/capture`, quick-add FAB, `InboxPanel`, setup.md §8 (Siri). |
+| **EP-12 Spec C** | iMessage poller + the `attributedBody` typedstream decoder. |
+| **EP-13** | Both directions of the GitHub Issues mirror, incl. deletion tombstones. |
+| **EP-14 B** | Ideas connector: 71 live specs imported, 7 merged ones skipped. |
+| **EP-14 C** | Digest section builders + a reply parser that refuses to guess. |
+| **EP-14 D** | launchd plist and the Full-Disk-Access/TCC trap, in setup.md §10. |
+| **EP-15 A/B** | ChatGPT / claude.ai / Takeout importers; ToS-bounded observations endpoint. |
 | **Beyond plan** | Project-backlog connector and the GitHub PRs/issues panel — both requested mid-implementation. |
 
 ### Where the plan was wrong, and what the data said
@@ -421,6 +427,18 @@ The `projects` table holds **stale paths** — rows point at
 `~/Documents/Projects/...` while the real location is `~/Projects/...`.
 The project-backlog connector reports this explicitly rather than
 claiming "no backlog file". Re-importing from `/discover` fixes it.
+
+### Two more things the data corrected
+
+9. **`attributedBody` is not an edge case.** The plan called the
+   typedstream decoder "the fragile part". On this Mac **497,612 of
+   949,169 messages (52%)** have a NULL `text` column — so it isn't a
+   fallback, it's the main path. The decoder was validated against 4,000
+   messages carrying both fields (4,000 exact matches, 0 mismatches)
+   before being trusted.
+10. **Idea specs get merged in place.** 7 of 78 keep their filename and
+    restyle the heading to `# ~~Name~~ — MERGED into #67`. Reading titles
+    naively would re-propose a dead idea every night, forever.
 
 ### Still open (plan §8 product calls)
 
