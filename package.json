@@ -16,7 +16,7 @@
     "nanoid": "^5.0.9",
     "next": "15.5.21",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
