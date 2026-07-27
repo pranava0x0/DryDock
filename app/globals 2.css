@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  /* Kraken Deep Sea Blue — the page chrome reads as "in a port at night,"
+     a bit closer to navy than pure black. See design.md. */
+  background-color: #001628;
+  color: #e8f1f4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  /* Reserve room for the safe-area inset on iOS so the bottom FAB / nav
+     doesn't sit under the home indicator. */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Focus rings — explicit and visible for keyboard accessibility. The
+   default browser ring is invisible on dark backgrounds. Uses Kraken
+   Ice so the ring reads as part of the brand. */
+:focus-visible {
+  outline: 2px solid #99d9d9; /* kraken-ice */
+  outline-offset: 2px;
+}
+
+/* Mono scroll-area used by the StreamViewer. White-space pre is essential
+   so agent output (which contains \n) renders as the agent intended. */
+.stream-output {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-variant-ligatures: none;
+}
