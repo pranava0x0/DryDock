@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { getDb } from "./index";
-import type { ProviderName } from "../providers/types";
+import type { AutonomyLevel, ProviderName } from "../providers/types";
 
 export type TaskStatus =
   | "pending"
@@ -25,6 +25,12 @@ export interface Task {
   title: string;
   description: string;
   provider: ProviderName;
+  /** Per-dispatch model override. NULL = routing rule → provider default. */
+  model: string | null;
+  /** Per-dispatch autonomy override. NULL = inherit the project's profile. */
+  autonomy: AutonomyLevel | null;
+  /** Who created the task: 'manual' | 'session' (New-session composer). */
+  source: string;
   status: TaskStatus;
   priority: number;
   branch: string | null;
@@ -41,6 +47,9 @@ export interface NewTaskInput {
   title: string;
   description: string;
   provider?: ProviderName;
+  model?: string | null;
+  autonomy?: AutonomyLevel | null;
+  source?: string;
   priority?: number;
 }
 
@@ -75,7 +84,8 @@ export function listTasks(filter: ListTasksFilter = {}): Task[] {
   const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   return db
     .prepare(
-      `SELECT id, project_id, title, description, provider, status, priority,
+      `SELECT id, project_id, title, description, provider, model, autonomy,
+              source, status, priority,
               branch, worktree_path, pr_url, created_at, updated_at,
               claimed_at, completed_at
        FROM tasks
@@ -89,7 +99,8 @@ export function getTask(id: string): Task | null {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, project_id, title, description, provider, status, priority,
+      `SELECT id, project_id, title, description, provider, model, autonomy,
+              source, status, priority,
               branch, worktree_path, pr_url, created_at, updated_at,
               claimed_at, completed_at
        FROM tasks WHERE id = ?`,
@@ -104,9 +115,20 @@ export function createTask(input: NewTaskInput): Task {
   const provider = input.provider ?? "claude";
   const priority = input.priority ?? 0;
   db.prepare(
-    `INSERT INTO tasks (id, project_id, title, description, provider, priority)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, input.project_id, input.title, input.description, provider, priority);
+    `INSERT INTO tasks (id, project_id, title, description, provider,
+                        model, autonomy, source, priority)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    input.project_id,
+    input.title,
+    input.description,
+    provider,
+    input.model ?? null,
+    input.autonomy ?? null,
+    input.source ?? "manual",
+    priority,
+  );
   const created = getTask(id);
   if (!created) {
     throw new Error(`createTask: row not found after insert (id=${id})`);
@@ -256,7 +278,8 @@ export function nextQueuedTask(): Task | null {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, project_id, title, description, provider, status, priority,
+      `SELECT id, project_id, title, description, provider, model, autonomy,
+              source, status, priority,
               branch, worktree_path, pr_url, created_at, updated_at,
               claimed_at, completed_at
        FROM tasks
@@ -334,7 +357,8 @@ export function listInFlightTasks(): Task[] {
   const db = getDb();
   return db
     .prepare(
-      `SELECT id, project_id, title, description, provider, status, priority,
+      `SELECT id, project_id, title, description, provider, model, autonomy,
+              source, status, priority,
               branch, worktree_path, pr_url, created_at, updated_at,
               claimed_at, completed_at
        FROM tasks

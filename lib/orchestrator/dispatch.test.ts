@@ -14,6 +14,8 @@ import {
   getLatestRunForTask,
   listRunsForTask,
 } from "../db/runs";
+import { setSetting } from "../db/settings";
+import { ROUTING_RULES_KEY } from "../routing/rules";
 import {
   dispatchTask,
   DispatchError,
@@ -51,17 +53,19 @@ function stubProvider(
 function recordingProvider(): {
   provider: AgentProvider;
   lastCwd: () => string | undefined;
+  lastOptions: () => AgentRunOptions | undefined;
 } {
-  let cwd: string | undefined;
+  let options: AgentRunOptions | undefined;
   return {
     provider: {
       name: "claude",
-      async *run(_prompt: string, options: AgentRunOptions) {
-        cwd = options.cwd;
+      async *run(_prompt: string, opts: AgentRunOptions) {
+        options = opts;
         yield { type: "exit", data: "", code: 0 };
       },
     },
-    lastCwd: () => cwd,
+    lastCwd: () => options?.cwd,
+    lastOptions: () => options,
   };
 }
 
@@ -654,5 +658,108 @@ describe("dispatchTask", () => {
     expect(run?.error).toMatch(/worktree setup failed: simulated git failure/);
     // Task still completes successfully (the stub agent exits 0).
     expect(task?.status).toBe<TaskStatus>("done");
+  });
+});
+
+describe("per-task overrides (session composer)", () => {
+  // A rule that matches every prompt in this block ("thing") and asks for
+  // sonnet — the foil the task-level override has to beat.
+  const SONNET_RULE = {
+    id: "r1",
+    label: "sonnet rule",
+    pattern: "thing",
+    patternType: "substring",
+    provider: "claude",
+    model: "claude-sonnet-4-6",
+    enabled: true,
+  };
+
+  it("task.model beats a matching routing rule's model", async () => {
+    setSetting(ROUTING_RULES_KEY, JSON.stringify([SONNET_RULE]));
+    const p = createProject({ name: "P", path: "/tmp/p" });
+    const t = createTask({
+      project_id: p.id,
+      title: "do thing",
+      description: "x",
+      model: "claude-opus-4-7",
+    });
+    const { provider, lastOptions } = recordingProvider();
+    const { done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: noGit,
+    });
+    await done;
+    expect(lastOptions()?.model).toBe("claude-opus-4-7");
+  });
+
+  it("a routing rule's model still applies when the task has no override", async () => {
+    setSetting(ROUTING_RULES_KEY, JSON.stringify([SONNET_RULE]));
+    const p = createProject({ name: "P", path: "/tmp/p" });
+    const t = createTask({
+      project_id: p.id,
+      title: "do thing",
+      description: "x",
+    });
+    const { provider, lastOptions } = recordingProvider();
+    const { done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: noGit,
+    });
+    await done;
+    expect(lastOptions()?.model).toBe("claude-sonnet-4-6");
+  });
+
+  it("task.autonomy beats the project profile and shows in the transcript", async () => {
+    const p = createProject({ name: "P", path: "/tmp/p", autonomy: "full" });
+    const t = createTask({
+      project_id: p.id,
+      title: "cautious ask",
+      description: "x",
+      autonomy: "readonly",
+    });
+    const { provider, lastOptions } = recordingProvider();
+    const { done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: noGit,
+    });
+    await done;
+    expect(lastOptions()?.autonomy).toBe("readonly");
+    const run = getLatestRunForTask(t.id);
+    expect(run?.output).toMatch(/autonomy profile: readonly/);
+  });
+
+  it("without overrides the project profile applies (pins pre-override behaviour)", async () => {
+    const p = createProject({ name: "P", path: "/tmp/p", autonomy: "full" });
+    const t = createTask({
+      project_id: p.id,
+      title: "plain",
+      description: "x",
+    });
+    const { provider, lastOptions } = recordingProvider();
+    const { done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: noGit,
+    });
+    await done;
+    expect(lastOptions()?.autonomy).toBe("full");
+    expect(lastOptions()?.model).toBeNull();
+  });
+
+  it("announces a model override in the transcript when no rule matched", async () => {
+    const p = createProject({ name: "P", path: "/tmp/p" });
+    const t = createTask({
+      project_id: p.id,
+      title: "modelled",
+      description: "x",
+      model: "claude-opus-4-7",
+    });
+    const { provider } = recordingProvider();
+    const { done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: noGit,
+    });
+    await done;
+    const run = getLatestRunForTask(t.id);
+    expect(run?.output).toMatch(/\[drydock\] model: claude-opus-4-7/);
   });
 });

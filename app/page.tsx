@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import type { Project } from "@/lib/db/projects";
 import type { TaskCountsByStatus } from "@/lib/db/tasks";
 import { ProjectCard } from "@/components/ProjectCard";
@@ -47,13 +48,21 @@ export default function Dashboard() {
     <>
       <RunningTasksPanel />
       <section>
-        <div className="mb-4 flex items-baseline justify-between">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <h1 className="text-xl font-semibold tracking-tight text-zinc-50">
             Projects
           </h1>
-          <span className="text-sm text-kraken-shadow">
-            {loading ? "loading…" : `${projects.length} total`}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-kraken-shadow">
+              {loading ? "loading…" : `${projects.length} total`}
+            </span>
+            <Link
+              href="/session/new"
+              className="flex min-h-[44px] items-center rounded-md bg-kraken-ice px-4 text-sm font-semibold text-kraken-deep transition hover:brightness-110"
+            >
+              New session
+            </Link>
+          </div>
         </div>
 
         {error ? (

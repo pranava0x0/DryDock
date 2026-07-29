@@ -20,6 +20,7 @@ import { getProvider } from "../providers";
 import type {
   AgentEvent,
   AgentProvider,
+  AutonomyLevel,
   ProviderName,
 } from "../providers/types";
 import { buildAgentPrompt, buildFollowupPrompt } from "./prompt";
@@ -217,7 +218,9 @@ export function dispatchTask(
   // Apply routing rules. First match wins; no match → use task's stored provider.
   const routingMatch = matchRoute(prompt, parseRules(getSetting(ROUTING_RULES_KEY)));
   const effectiveProvider = routingMatch?.provider ?? task.provider;
-  const effectiveModel = routingMatch?.model ?? null;
+  // Per-task overrides (session composer) beat routing rules / project
+  // defaults; NULL falls through to the pre-existing behaviour.
+  const effectiveModel = task.model ?? routingMatch?.model ?? null;
   const matchedRuleLabel = routingMatch?.ruleLabel ?? null;
 
   // Create the run row up front so we have an id to return immediately.
@@ -245,6 +248,7 @@ export function dispatchTask(
     timeoutMs: options.timeoutMs ?? agentTimeoutMs(),
     effectiveModel,
     effectiveProvider,
+    effectiveAutonomy: task.autonomy ?? project.autonomy,
     matchedRuleLabel,
     resumeSessionId: null,
     options,
@@ -403,8 +407,11 @@ export function followUpTask(
     controller,
     activeRun,
     timeoutMs: options.timeoutMs ?? agentTimeoutMs(),
-    effectiveModel: null,
+    // Follow-ups inherit the task's own overrides (a routing rule still
+    // can't switch models mid-thread — no re-match happens here).
+    effectiveModel: task.model ?? null,
     effectiveProvider,
+    effectiveAutonomy: task.autonomy ?? project.autonomy,
     matchedRuleLabel: null,
     resumeSessionId: parent.session_id,
     options,
@@ -474,6 +481,8 @@ interface RunAndFinalizeParams {
   timeoutMs: number;
   effectiveModel: string | null;
   effectiveProvider: ProviderName;
+  /** Resolved blast radius: task override ?? project profile. */
+  effectiveAutonomy: AutonomyLevel;
   matchedRuleLabel: string | null;
   resumeSessionId: string | null;
   options: DispatchOptions;
@@ -509,6 +518,7 @@ function runAndFinalize(params: RunAndFinalizeParams): Promise<void> {
     timeoutMs,
     effectiveModel,
     effectiveProvider,
+    effectiveAutonomy,
     matchedRuleLabel,
     resumeSessionId,
     options,
@@ -544,19 +554,23 @@ function runAndFinalize(params: RunAndFinalizeParams): Promise<void> {
           stdoutLines,
           `[drydock] routing rule "${matchedRuleLabel}" → ${effectiveProvider}${modelNote}`,
         );
+      } else if (effectiveModel) {
+        // A per-task model override with no rule involved — still make the
+        // model legible in the transcript.
+        emit(run.id, stdoutLines, `[drydock] model: ${effectiveModel}`);
       }
       if (resumeSessionId) {
         emit(run.id, stdoutLines, `[drydock] resuming session ${resumeSessionId}`);
       }
       // Make the blast radius legible in every transcript.
-      emit(run.id, stdoutLines, `[drydock] autonomy profile: ${project.autonomy}`);
+      emit(run.id, stdoutLines, `[drydock] autonomy profile: ${effectiveAutonomy}`);
 
       for await (const event of provider.run(prompt, {
         cwd,
         signal: controller.signal,
         timeoutMs,
         model: effectiveModel,
-        autonomy: project.autonomy,
+        autonomy: effectiveAutonomy,
         resumeSessionId,
       })) {
         if (event.type === "stdout") stdoutLines.push(event.data);

@@ -117,6 +117,9 @@ function migrate(db: DB): void {
 
   ensure("projects", "test_command", "test_command TEXT");
   ensure("projects", "autonomy", "autonomy TEXT NOT NULL DEFAULT 'edits'");
+  ensure("tasks", "model", "model TEXT");
+  ensure("tasks", "autonomy", "autonomy TEXT");
+  ensure("tasks", "source", "source TEXT NOT NULL DEFAULT 'manual'");
   ensure("runs", "tokens_in", "tokens_in INTEGER");
   ensure("runs", "tokens_out", "tokens_out INTEGER");
   ensure("runs", "cost_usd", "cost_usd REAL");

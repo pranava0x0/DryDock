@@ -30,6 +30,23 @@ export function conflict(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 409 });
 }
 
+/** 429: rate limited. `retryAfterSec` becomes a Retry-After header. */
+export function tooManyRequests(
+  message: string,
+  retryAfterSec?: number,
+): NextResponse {
+  return NextResponse.json(
+    { error: message },
+    {
+      status: 429,
+      headers:
+        retryAfterSec !== undefined
+          ? { "Retry-After": String(Math.max(1, Math.ceil(retryAfterSec))) }
+          : undefined,
+    },
+  );
+}
+
 export function serverError(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 500 });
 }
