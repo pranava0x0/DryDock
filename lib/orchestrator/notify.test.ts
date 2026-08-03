@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { _resetDbForTests, getDb } from "../db/index";
 import { createProject } from "../db/projects";
 import { createTask } from "../db/tasks";
-import { notifyRunCompletion, postCompletionNotice } from "./notify";
+import {
+  formatNoticeBody,
+  notifyRunCompletion,
+  postCompletionNotice,
+} from "./notify";
 import type { CompletionNotice } from "./notify";
 
 const NOTICE: CompletionNotice = {
@@ -16,6 +20,32 @@ const NOTICE: CompletionNotice = {
   cost_usd: 0.12,
   branch: "drydock/t1-do-thing",
 };
+
+describe("formatNoticeBody (Codex P2, PR #14)", () => {
+  it("sends Slack incoming webhooks the {text} shape they require", () => {
+    const body = JSON.parse(
+      formatNoticeBody("https://hooks.slack.com/services/T/B/x", NOTICE),
+    );
+    expect(Object.keys(body)).toEqual(["text"]);
+    expect(body.text).toContain("do thing");
+    expect(body.text).toContain("✅");
+  });
+
+  it("sends Discord webhooks the {content} shape they require", () => {
+    const body = JSON.parse(
+      formatNoticeBody("https://discord.com/api/webhooks/123/abc", NOTICE),
+    );
+    expect(Object.keys(body)).toEqual(["content"]);
+    expect(body.content).toContain("do thing");
+  });
+
+  it("sends everything else the full structured notice", () => {
+    const body = JSON.parse(
+      formatNoticeBody("https://ntfy.example/drydock", NOTICE),
+    );
+    expect(body).toEqual(NOTICE);
+  });
+});
 
 describe("postCompletionNotice", () => {
   it("POSTs the notice as JSON and reports sent", async () => {

@@ -115,6 +115,14 @@ export async function POST(request: NextRequest): Promise<Response> {
         `\`autonomy\` must be one of: ${AUTONOMY_LEVELS.join(", ")}`,
       );
     }
+    if (provider !== "claude") {
+      // Gemini's CLI has no per-invocation permission flags, so an
+      // accepted override would be printed in the transcript as if it were
+      // enforced — a confident-looking lie. Refuse instead.
+      return badRequest(
+        "`autonomy` overrides are only enforceable for the claude provider",
+      );
+    }
     autonomy = raw.autonomy;
   }
 

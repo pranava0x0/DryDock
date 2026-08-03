@@ -76,14 +76,21 @@ export default function NewSessionPage() {
     const next = projects.find((p) => p.id === id);
     if (next && !providerTouched.current) {
       setProvider(next.provider);
-      if (next.provider !== "claude") setModel("");
+      if (next.provider !== "claude") {
+        // Neither override is enforceable off-claude (the API rejects them).
+        setModel("");
+        setAutonomy("");
+      }
     }
   };
 
   const handleProviderChange = (p: ProviderName) => {
     providerTouched.current = true;
     setProvider(p);
-    if (p !== "claude") setModel("");
+    if (p !== "claude") {
+      setModel("");
+      setAutonomy("");
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -247,7 +254,8 @@ export default function NewSessionPage() {
                   onChange={(e) =>
                     setAutonomy(e.target.value as "" | AutonomyLevel)
                   }
-                  className="mt-1 block w-full min-h-[44px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-zinc-50 focus:border-kraken-ice focus:outline-none"
+                  disabled={provider !== "claude"}
+                  className="mt-1 block w-full min-h-[44px] rounded-md border border-kraken-boundless bg-kraken-deep px-3 text-zinc-50 focus:border-kraken-ice focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <option value="">
                     Project default ({selectedProject?.autonomy ?? "edits"})
@@ -257,7 +265,9 @@ export default function NewSessionPage() {
                   <option value="full">Full</option>
                 </select>
                 <span className="mt-1 block text-xs text-zinc-500">
-                  {AUTONOMY_HINTS[effectiveAutonomy]}
+                  {provider === "claude"
+                    ? AUTONOMY_HINTS[effectiveAutonomy]
+                    : "Autonomy overrides apply to Claude only — Gemini's CLI can't enforce them."}
                 </span>
               </label>
             </div>

@@ -216,11 +216,15 @@ export function dispatchTask(
   // Build the prompt first so routing rules can match against it.
   const prompt = buildAgentPrompt(task);
 
-  // Apply routing rules. First match wins; no match → use task's stored provider.
-  const routingMatch = matchRoute(prompt, parseRules(getSetting(ROUTING_RULES_KEY)));
+  // Apply routing rules. First match wins; no match → use task's stored
+  // provider. A per-task model override (session composer) is an explicit
+  // choice of model AND provider, so routing rules are skipped entirely for
+  // it — a rule could otherwise flip the session onto a provider that
+  // silently drops the chosen model (Codex P1, PR #14).
+  const routingMatch = task.model
+    ? null
+    : matchRoute(prompt, parseRules(getSetting(ROUTING_RULES_KEY)));
   const effectiveProvider = routingMatch?.provider ?? task.provider;
-  // Per-task overrides (session composer) beat routing rules / project
-  // defaults; NULL falls through to the pre-existing behaviour.
   const effectiveModel = task.model ?? routingMatch?.model ?? null;
   const matchedRuleLabel = routingMatch?.ruleLabel ?? null;
 

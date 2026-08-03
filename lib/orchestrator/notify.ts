@@ -28,7 +28,32 @@ type FetchLike = (
 ) => Promise<{ ok: boolean }>;
 
 /**
- * POST the notice as JSON. One retry on a non-2xx or network error (per the
+ * Slack and Discord incoming webhooks reject arbitrary JSON — Slack wants
+ * `{text}`, Discord `{content}` (Codex P2, PR #14). Sniff those two hosts
+ * and send the human-readable line they expect; every other endpoint
+ * (ntfy, custom receivers) gets the full structured notice.
+ */
+export function formatNoticeBody(url: string, notice: CompletionNotice): string {
+  const line =
+    `${notice.status === "done" ? "✅" : "❌"} ${notice.project}: ` +
+    `${notice.title || notice.task_id} — ${notice.status}` +
+    (notice.cost_usd != null ? ` ($${notice.cost_usd.toFixed(4)})` : "") +
+    (notice.branch ? ` [${notice.branch}]` : "");
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    // Unparseable URL — fetch will fail and report it; send the generic body.
+  }
+  if (host === "hooks.slack.com") return JSON.stringify({ text: line });
+  if (host === "discord.com" || host === "discordapp.com") {
+    return JSON.stringify({ content: line });
+  }
+  return JSON.stringify(notice);
+}
+
+/**
+ * POST the notice. One retry on a non-2xx or network error (per the
  * backlog spec), 5s timeout per attempt, and no exception ever escapes.
  */
 export async function postCompletionNotice(
@@ -36,12 +61,13 @@ export async function postCompletionNotice(
   notice: CompletionNotice,
   fetchFn: FetchLike = fetch,
 ): Promise<NotifyOutcome> {
+  const body = formatNoticeBody(url, notice);
   const attempt = async (): Promise<boolean> => {
     try {
       const res = await fetchFn(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(notice),
+        body,
         signal: AbortSignal.timeout(5000),
       });
       return res.ok;

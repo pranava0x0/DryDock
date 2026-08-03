@@ -745,6 +745,33 @@ describe("per-task overrides (session composer)", () => {
     expect(lastOptions()?.model).toBeNull();
   });
 
+  it("a model override pins the provider against a rule that would flip it", async () => {
+    // Codex P1 (PR #14): a rule targeting gemini must not strand an
+    // explicitly chosen Claude model on a provider that drops it.
+    setSetting(
+      ROUTING_RULES_KEY,
+      JSON.stringify([{ ...SONNET_RULE, provider: "gemini", model: null }]),
+    );
+    const p = createProject({ name: "P", path: "/tmp/p" });
+    const t = createTask({
+      project_id: p.id,
+      title: "do thing",
+      description: "x",
+      model: "claude-opus-4-7",
+    });
+    const { provider, lastOptions } = recordingProvider();
+    const { done } = dispatchTask(t.id, {
+      providerFactory: () => provider,
+      isGitRepo: noGit,
+    });
+    await done;
+    expect(lastOptions()?.model).toBe("claude-opus-4-7");
+    const run = getLatestRunForTask(t.id);
+    expect(run?.provider).toBe("claude");
+    // Routing was skipped entirely, so no rule label lands on the run.
+    expect(run?.matched_rule).toBeNull();
+  });
+
   it("announces a model override in the transcript when no rule matched", async () => {
     const p = createProject({ name: "P", path: "/tmp/p" });
     const t = createTask({

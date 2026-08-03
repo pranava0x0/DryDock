@@ -9,6 +9,27 @@ import type { AgentEvent, AgentRunOptions } from "./types";
 export const DEFAULT_AGENT_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
+ * DryDock's own credentials, stripped from every agent subprocess
+ * environment (Codex P1, PR #14): an injected agent could otherwise read
+ * the tunnel auth secret or the completion-webhook URL (itself a bearer
+ * credential for Slack/Discord-style endpoints) straight from `env` and
+ * exfiltrate or forge with them. The CLIs need PATH/HOME for their own
+ * OAuth sessions — they never need DryDock's secrets.
+ */
+const CHILD_ENV_DENYLIST = [
+  "DRYDOCK_AUTH_TOKEN",
+  "DRYDOCK_NOTIFY_WEBHOOK_URL",
+] as const;
+
+export function childEnv(
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env = { ...base };
+  for (const key of CHILD_ENV_DENYLIST) delete env[key];
+  return env;
+}
+
+/**
  * Spawn a CLI subprocess and yield its line-by-line output as AgentEvents.
  *
  * Shared by all providers: every CLI we wrap (`claude --print`, `gemini -p`,
@@ -34,8 +55,9 @@ export async function* spawnAgent(
   const child = spawn(command, args, {
     cwd: options.cwd,
     // Inherit PATH and HOME so the CLI can find its OAuth session under
-    // ~/.claude or ~/.gemini. We intentionally do NOT pass any secrets.
-    env: process.env,
+    // ~/.claude or ~/.gemini — minus DryDock's own credentials (see
+    // CHILD_ENV_DENYLIST). We intentionally pass no secrets of our own.
+    env: childEnv(),
     stdio: ["ignore", "pipe", "pipe"],
   });
 

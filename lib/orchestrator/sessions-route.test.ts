@@ -128,6 +128,21 @@ describe("POST /api/sessions — validation", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400s an autonomy override on a non-claude provider (unenforceable)", async () => {
+    const p = projectOnDisk();
+    const res = await sessionsPOST(
+      req({
+        projectId: p.id,
+        prompt: "hi",
+        provider: "gemini",
+        autonomy: "readonly",
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/claude/);
+  });
+
   it("400s malformed JSON", async () => {
     const res = await sessionsPOST(req("this is not json"));
     expect(res.status).toBe(400);
