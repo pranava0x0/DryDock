@@ -68,7 +68,9 @@ Two project-specific Claude Code skills live in [`.claude/skills/`](.claude/skil
 - [x] Global backlog + bidirectional Apple Notes sync
 - [x] EP-1 — Front-door auth (Cloudflare Access / token, loopback bind), autonomy profiles, concurrency cap + queue, cancel
 - [x] EP-2 — Resumable task threads (session capture, follow-up turns via `claude --resume`, retry-with-feedback)
+- [x] EP-10…EP-15 — All-provider usage ledger + subscription analytics, GitHub code-flow analytics, capture inbox (Siri/iMessage), GitHub Issues mirror, MCP fleet linkage (see [docs/analytics-capture-plan-2026-07.md](docs/analytics-capture-plan-2026-07.md))
 - [x] Session kickoff from the web UI — `POST /api/sessions` one-call create+dispatch, per-task model/autonomy overrides, kickoff rate limit, optional `DRYDOCK_LOCAL_DISPATCH_ONLY` mode (security model in [docs/setup.md](docs/setup.md) §12)
+- [x] DD-BL-28 — Completion webhook (`DRYDOCK_NOTIFY_WEBHOOK_URL`): POST on every run finish for phone alerts without the PWA open
 
 The next epic (**EP-3 — close the git loop:** diff view → commit → push → PR/merge from the phone) and the full sequencing live in [docs/improvement-plan-2026-07.md](docs/improvement-plan-2026-07.md). The parallel telemetry/capture/linkage track (**EP-10…EP-15**: all-provider usage + subscription analytics, GitHub code-flow analytics, capture inbox, GitHub Issues mirror, MCP fleet linkage) lives in [docs/analytics-capture-plan-2026-07.md](docs/analytics-capture-plan-2026-07.md).
 

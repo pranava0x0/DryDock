@@ -24,6 +24,7 @@ import type {
   ProviderName,
 } from "../providers/types";
 import { buildAgentPrompt, buildFollowupPrompt } from "./prompt";
+import { notifyRunCompletion } from "./notify";
 import { publish } from "./hub";
 import {
   createWorktree as defaultCreateWorktree,
@@ -720,6 +721,15 @@ function runAndFinalize(params: RunAndFinalizeParams): Promise<void> {
         session_id: sessionId ?? resumeSessionId,
       });
       updateTask(task.id, { status: succeeded ? "done" : "failed" });
+      // DD-BL-28: fire-and-forget completion webhook. Not awaited — a slow
+      // endpoint must never delay the terminator or the queue drain, and
+      // notifyRunCompletion never throws.
+      void notifyRunCompletion({
+        taskId: task.id,
+        project: project.name,
+        status: succeeded ? "done" : "failed",
+        costUsd,
+      });
       // Synthesized terminator: the only `exit` event ever published for
       // this run. Subscribers (SSE clients) terminate here, having seen the
       // agent stream, gate transcript, and cleanup notes in order.
