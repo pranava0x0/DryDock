@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { tmpdir } from "node:os";
-import { spawnAgent } from "./spawn";
+import { childEnv, spawnAgent } from "./spawn";
 import type { AgentEvent } from "./types";
 
 async function collect(
@@ -106,5 +106,44 @@ describe("spawnAgent", () => {
     expect(exitEvents).toHaveLength(1);
     expect(exitEvents[0].code).toBe(-1);
     expect(events.some((e) => e.type === "stderr")).toBe(true);
+  });
+});
+
+describe("child environment credential stripping (Codex P1, PR #14)", () => {
+  afterEach(() => {
+    delete process.env.DRYDOCK_NOTIFY_WEBHOOK_URL;
+    delete process.env.DRYDOCK_AUTH_TOKEN;
+  });
+
+  it("childEnv drops DryDock's credentials and keeps everything else", () => {
+    const env = childEnv({
+      NODE_ENV: "test",
+      PATH: "/usr/bin",
+      HOME: "/Users/x",
+      DRYDOCK_AUTH_TOKEN: "secret",
+      DRYDOCK_NOTIFY_WEBHOOK_URL: "https://hooks.slack.com/services/T/B/x",
+    });
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.HOME).toBe("/Users/x");
+    expect(env.DRYDOCK_AUTH_TOKEN).toBeUndefined();
+    expect(env.DRYDOCK_NOTIFY_WEBHOOK_URL).toBeUndefined();
+  });
+
+  it("a spawned agent subprocess cannot see the credentials", async () => {
+    process.env.DRYDOCK_NOTIFY_WEBHOOK_URL = "https://hooks.slack.com/x";
+    process.env.DRYDOCK_AUTH_TOKEN = "tunnel-secret";
+    const events = await collect(
+      spawnAgent(
+        process.execPath,
+        [
+          "-e",
+          "console.log(`${process.env.DRYDOCK_NOTIFY_WEBHOOK_URL ?? 'absent'}|${process.env.DRYDOCK_AUTH_TOKEN ?? 'absent'}`);",
+        ],
+        { cwd: tmpdir() },
+      ),
+    );
+    expect(
+      events.filter((e) => e.type === "stdout").map((e) => e.data),
+    ).toEqual(["absent|absent"]);
   });
 });

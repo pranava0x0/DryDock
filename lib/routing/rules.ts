@@ -3,10 +3,17 @@ import type { ProviderName } from "../providers/types";
 
 export const ROUTING_RULES_KEY = "routing_rules";
 
+// Additive list: keep older entries so stored routing rules (and queued
+// tasks carrying a model override) keep validating; append new families at
+// the bottom. An id the user's Claude Code plan can't serve fails visibly
+// in the run stream, not silently.
 export const CLAUDE_MODELS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5 — fast / cheap" },
-  { value: "claude-sonnet-4-6", label: "Sonnet 4.6 — balanced" },
-  { value: "claude-opus-4-7", label: "Opus 4.7 — most capable" },
+  { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { value: "claude-opus-4-7", label: "Opus 4.7" },
+  { value: "claude-sonnet-5", label: "Sonnet 5 — balanced" },
+  { value: "claude-opus-5", label: "Opus 5 — most capable" },
+  { value: "claude-fable-5", label: "Fable 5 — frontier" },
 ];
 
 export interface RoutingRule {

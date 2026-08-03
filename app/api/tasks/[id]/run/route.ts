@@ -4,6 +4,7 @@ import {
   DispatchError,
 } from "@/lib/orchestrator/dispatch";
 import { accepted, conflict, notFound, ok, serverError } from "@/lib/api/json";
+import { rejectRemoteDispatch } from "@/lib/api/local-only";
 
 export const runtime = "nodejs";
 
@@ -25,9 +26,11 @@ interface RouteContext {
  * truth.
  */
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   ctx: RouteContext,
 ): Promise<Response> {
+  const localOnly = rejectRemoteDispatch(request);
+  if (localOnly) return localOnly;
   const { id } = await ctx.params;
   try {
     const result = runTaskWithCap(id);

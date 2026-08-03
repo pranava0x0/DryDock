@@ -24,6 +24,15 @@ CREATE TABLE IF NOT EXISTS tasks (
   title         TEXT NOT NULL,
   description   TEXT NOT NULL,
   provider      TEXT NOT NULL DEFAULT 'claude',
+  -- Per-dispatch overrides (session composer). NULL = inherit: model falls
+  -- back to the routing-rule match then the provider default; autonomy
+  -- falls back to the project's profile.
+  model         TEXT,
+  autonomy      TEXT,
+  -- Who created the task: 'manual' (AddTaskModal / POST /api/tasks) or
+  -- 'session' (the New-session composer). Union enforced in the app layer,
+  -- like backlog_items.source.
+  source        TEXT NOT NULL DEFAULT 'manual',
   -- status lifecycle: pending -> claimed -> running -> done | failed.
   -- 'queued' sits between pending and claimed when the concurrency cap is
   -- full: pending -> queued -> claimed -> running -> ...

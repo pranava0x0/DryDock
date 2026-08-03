@@ -247,11 +247,17 @@ Append discovered pathways, selectors that worked, and timing notes so future ru
 
 Three lines of defense, in order:
 
-1. **Project path that doesn't exist** — Best. The `claude` / `gemini` CLI fails before contacting the model. We use `/tmp/uat-smoke` which we don't create.
+1. **Project path that doesn't exist** — works for the task-card **Run** button only. The `claude` / `gemini` CLI fails before contacting the model. We use `/tmp/uat-smoke` which we don't create. ⚠ Since 2026-08-03 this trick does NOT exercise the **New session** composer: `POST /api/sessions` preflights the path and 409s before any task exists (DD-017 guard) — use the stub (3) with a real-but-scratch directory instead.
 2. **`claude` / `gemini` not on PATH** — Backup. The dispatcher catches the ENOENT and emits a clean stderr + exit.
 3. **Provider stub via env var** — set `DRYDOCK_PROVIDER_STUB=1` (and optionally `DRYDOCK_PROVIDER_STUB_DELAY_MS=10000`) before `npm run dev`; every dispatch resolves to the no-op stub in [lib/providers/index.ts](lib/providers/index.ts) (abort-aware delay, so cancel is observable). Prefer this over paths (1)/(2) when you need to observe queued/running/Stop states, not just a fast failure.
 
 **Never** point the UAT project at a real local repo and click Run. That's a real dispatch.
+
+### Learned patterns (2026-08-03, session-kickoff UAT)
+
+- **Isolate the whole UAT env, not just the provider.** For dispatch-surface UAT, write a worktree `.env.local` with a scratch `DRYDOCK_DB_PATH` + the stub vars so the run never touches `~/.drydock/drydock.db` — and **delete `.env.local` afterwards**, or the next `npm run dev` silently runs stubbed against the scratch DB (a looks-like-success trap).
+- **A submit click after `form_input` can silently no-op.** Observed on `/session/new`: filling two selects then clicking the previously-cached Start ref did nothing — no POST, no error. Re-`read_page` (fresh refs) and click again. Verify a dispatch happened via the POST/response or a DB row, never by the absence of an error.
+- **New baseline flow to cover:** dashboard → **New session** (`/session/new`) → project preselect, prompt, Advanced model/autonomy overrides → Start → lands on `/project/[id]` with the stream open (transcript shows `[drydock] model:` and `autonomy profile:` lines); a second kickoff past the cap returns 202 and shows the queued badge; a page refresh must NOT re-open the viewer (one-shot `?stream=` param).
 
 ---
 

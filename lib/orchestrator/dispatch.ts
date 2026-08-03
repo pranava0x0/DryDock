@@ -20,9 +20,11 @@ import { getProvider } from "../providers";
 import type {
   AgentEvent,
   AgentProvider,
+  AutonomyLevel,
   ProviderName,
 } from "../providers/types";
 import { buildAgentPrompt, buildFollowupPrompt } from "./prompt";
+import { notifyRunCompletion } from "./notify";
 import { publish } from "./hub";
 import {
   createWorktree as defaultCreateWorktree,
@@ -214,10 +216,16 @@ export function dispatchTask(
   // Build the prompt first so routing rules can match against it.
   const prompt = buildAgentPrompt(task);
 
-  // Apply routing rules. First match wins; no match → use task's stored provider.
-  const routingMatch = matchRoute(prompt, parseRules(getSetting(ROUTING_RULES_KEY)));
+  // Apply routing rules. First match wins; no match → use task's stored
+  // provider. A per-task model override (session composer) is an explicit
+  // choice of model AND provider, so routing rules are skipped entirely for
+  // it — a rule could otherwise flip the session onto a provider that
+  // silently drops the chosen model (Codex P1, PR #14).
+  const routingMatch = task.model
+    ? null
+    : matchRoute(prompt, parseRules(getSetting(ROUTING_RULES_KEY)));
   const effectiveProvider = routingMatch?.provider ?? task.provider;
-  const effectiveModel = routingMatch?.model ?? null;
+  const effectiveModel = task.model ?? routingMatch?.model ?? null;
   const matchedRuleLabel = routingMatch?.ruleLabel ?? null;
 
   // Create the run row up front so we have an id to return immediately.
@@ -245,6 +253,7 @@ export function dispatchTask(
     timeoutMs: options.timeoutMs ?? agentTimeoutMs(),
     effectiveModel,
     effectiveProvider,
+    effectiveAutonomy: task.autonomy ?? project.autonomy,
     matchedRuleLabel,
     resumeSessionId: null,
     options,
@@ -403,8 +412,11 @@ export function followUpTask(
     controller,
     activeRun,
     timeoutMs: options.timeoutMs ?? agentTimeoutMs(),
-    effectiveModel: null,
+    // Follow-ups inherit the task's own overrides (a routing rule still
+    // can't switch models mid-thread — no re-match happens here).
+    effectiveModel: task.model ?? null,
     effectiveProvider,
+    effectiveAutonomy: task.autonomy ?? project.autonomy,
     matchedRuleLabel: null,
     resumeSessionId: parent.session_id,
     options,
@@ -474,6 +486,8 @@ interface RunAndFinalizeParams {
   timeoutMs: number;
   effectiveModel: string | null;
   effectiveProvider: ProviderName;
+  /** Resolved blast radius: task override ?? project profile. */
+  effectiveAutonomy: AutonomyLevel;
   matchedRuleLabel: string | null;
   resumeSessionId: string | null;
   options: DispatchOptions;
@@ -509,6 +523,7 @@ function runAndFinalize(params: RunAndFinalizeParams): Promise<void> {
     timeoutMs,
     effectiveModel,
     effectiveProvider,
+    effectiveAutonomy,
     matchedRuleLabel,
     resumeSessionId,
     options,
@@ -544,19 +559,23 @@ function runAndFinalize(params: RunAndFinalizeParams): Promise<void> {
           stdoutLines,
           `[drydock] routing rule "${matchedRuleLabel}" → ${effectiveProvider}${modelNote}`,
         );
+      } else if (effectiveModel) {
+        // A per-task model override with no rule involved — still make the
+        // model legible in the transcript.
+        emit(run.id, stdoutLines, `[drydock] model: ${effectiveModel}`);
       }
       if (resumeSessionId) {
         emit(run.id, stdoutLines, `[drydock] resuming session ${resumeSessionId}`);
       }
       // Make the blast radius legible in every transcript.
-      emit(run.id, stdoutLines, `[drydock] autonomy profile: ${project.autonomy}`);
+      emit(run.id, stdoutLines, `[drydock] autonomy profile: ${effectiveAutonomy}`);
 
       for await (const event of provider.run(prompt, {
         cwd,
         signal: controller.signal,
         timeoutMs,
         model: effectiveModel,
-        autonomy: project.autonomy,
+        autonomy: effectiveAutonomy,
         resumeSessionId,
       })) {
         if (event.type === "stdout") stdoutLines.push(event.data);
@@ -706,6 +725,15 @@ function runAndFinalize(params: RunAndFinalizeParams): Promise<void> {
         session_id: sessionId ?? resumeSessionId,
       });
       updateTask(task.id, { status: succeeded ? "done" : "failed" });
+      // DD-BL-28: fire-and-forget completion webhook. Not awaited — a slow
+      // endpoint must never delay the terminator or the queue drain, and
+      // notifyRunCompletion never throws.
+      void notifyRunCompletion({
+        taskId: task.id,
+        project: project.name,
+        status: succeeded ? "done" : "failed",
+        costUsd,
+      });
       // Synthesized terminator: the only `exit` event ever published for
       // this run. Subscribers (SSE clients) terminate here, having seen the
       // agent stream, gate transcript, and cleanup notes in order.

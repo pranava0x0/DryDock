@@ -43,7 +43,7 @@ npm run dev
 
 Open http://localhost:3000. Three landings on the dashboard:
 
-- **Default** — list of registered projects. Click **+ FAB** to add one manually.
+- **Default** — list of registered projects. Click **+ FAB** to add one manually. The **New session** button next to the Projects heading opens the one-call composer (prompt → dispatch, see §12).
 - **Discover** (top-right link) — scans `~/Documents/Projects` (or whatever `DRYDOCK_PROJECTS_ROOT` points at) and shows every subdir with detected stack chips (next / node / python / rust / go / ruby / php). One-click **Import** sets a sensible default quality-gate command.
 - **Backlog** (top-right link) — global cross-project idea list. Add an idea, assign it to a project, hit **🔥 Burn down** to materialize it as a Pending task.
 
@@ -346,6 +346,90 @@ capture everything you send yourself.
   "text unreadable — open Messages". Silently skipping would lose a
   thought with no trace that anything happened.
 - **Full Disk Access** — see §10. `health()` reports the real reason.
+
+## 12. Kick off sessions from the phone — and the security model
+
+The dashboard's **New session** button (`/session/new` in the PWA) is a
+one-call composer: pick a project, type a prompt, optionally override the
+model or autonomy under **Advanced**, tap **Start session**. `POST
+/api/sessions` creates the task (title = the prompt's first line) and
+dispatches it in the same request; you land on the project page with the
+live stream already open — or with a queue badge when the concurrency cap
+is full (202, the task drains FIFO).
+
+Because it rides the normal dispatch pipeline, everything else just works:
+the run streams over SSE, survives your phone locking, takes follow-up
+turns via `--resume`, and can be cancelled remotely.
+
+### What that endpoint is, stated plainly
+
+An authenticated POST that spawns a `claude` subprocess on this Mac with
+file-edit permissions — and under `full` autonomy, arbitrary Bash — inside
+a repo worktree. Anyone who can call it can change code on this machine.
+It is remote code execution **by design**; authentication is the security
+story, and everything below is a layer around that fact.
+
+### Why subscriptions instead of API keys
+
+- **No secret exists in the web tier to steal.** The dispatcher inherits
+  `PATH`/`HOME` only; the CLI reads its own OAuth session under
+  `~/.claude/`. Compromising the app yields no `ANTHROPIC_API_KEY`,
+  because there isn't one — a repo working agreement, not an accident.
+- **Subscription quota bounds the damage.** A hijacked dispatch burns
+  plan headroom, not an unmetered pay-per-token key.
+- **Revocation is `claude logout` on this Mac**, not a key rotation
+  hunted across configs.
+
+### The layers around a dispatch
+
+| Layer | What it bounds |
+|---|---|
+| Front-door auth (§5) — Cloudflare Access or token, **fail-closed** when neither is set | who can reach any route at all; the `SameSite=Lax` cookie also makes cross-site POSTs (CSRF) a non-starter |
+| Autonomy profile — `readonly` (plan only) / `edits` (file edits + a 7-command Bash allowlist) / `full` (edits + any Bash) | what the subprocess may do; `--dangerously-skip-permissions` is never emitted, regression-pinned in `lib/providers/claude.test.ts` |
+| Per-task git worktree | the agent works on a branch fork, not your checkout — misbehavior is inspectable and discardable |
+| Concurrency cap + FIFO queue | a spammed or hijacked endpoint starts at most `max_concurrent_runs` agents; the rest queue visibly |
+| Kickoff rate limit (burst 10, refill 10/min, in-process) | throttles a stolen-credential burst; resets on restart — a layer, not a substitute for auth |
+| Prompt cap (20k chars) + `tasks.source = 'session'` | bounds stored input; `source` + `created_at` + the full transcript answer "what started this run?" |
+| Path preflight (DD-017) | a stale project path fails with a 409 naming the path instead of a cryptic worktree ENOENT mid-run |
+| 10-min subprocess timeout + quality gate | runaways get killed; "agent exited 0 but tests fail" demotes to failed |
+
+### What `full` autonomy means through a tunnel
+
+A phone-reachable button that runs arbitrary shell as your user. That's
+sometimes exactly what you want — but keep projects on `edits` and treat a
+per-session `full` (the composer's Advanced section) as a deliberate,
+visible escalation: the transcript's `[drydock] autonomy profile:` line
+records it per run.
+
+### Hosting options, ranked
+
+1. **Localhost only** — don't run the tunnel; or run it with
+   `DRYDOCK_LOCAL_DISPATCH_ONLY=1`, which keeps remote view/stream/cancel
+   working but rejects remote kickoff, `/run`, and `/followup` (dispatch
+   then requires being at the Mac). The most conservative posture.
+2. **Cloudflare Access in front of the tunnel** *(recommended remote
+   setup)* — real identity + MFA at the edge; the origin re-verifies the
+   `Cf-Access-Jwt-Assertion` JWT, so a leaked tunnel URL alone is useless.
+3. **Shared token** (`DRYDOCK_AUTH_TOKEN`) — acceptable single-user
+   floor. Generate 32+ random bytes, enter it once at `/auth` (30-day
+   httpOnly cookie), rotate on any suspicion.
+4. **Unauthenticated — never.** With neither auth mode configured the
+   middleware refuses every non-local request (fail closed); leaving it
+   that way requires deliberate effort. Keep it that way.
+
+### Honest residual risks
+
+- **Prompt injection on the agent.** A malicious file, issue, or web page
+  the agent reads can steer it *within its autonomy envelope*. That's the
+  same lethal-trifecta reasoning that keeps dispatch tools off the MCP
+  surface (§9) — the mitigation is the autonomy profile and the worktree,
+  not wishful prompting.
+- **Token theft from the phone.** A stolen 30-day cookie dispatches until
+  rotated. Cloudflare Access (option 2) moves that risk to an IdP with
+  MFA; the rate limit and cap bound the blast while it lasts.
+- **The rate limit is in-process.** A restart refills it. It exists to
+  slow a burst, not to gate a determined authenticated attacker — that's
+  what auth mode choice is for.
 
 ## Troubleshooting
 

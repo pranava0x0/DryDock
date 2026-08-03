@@ -321,3 +321,36 @@ describe("followUpTask concurrency cap", () => {
     expect(getTask(task.id)?.description).toContain("keep going");
   });
 });
+
+describe("followUpTask override inheritance", () => {
+  it("passes the task's model and autonomy overrides to the resumed run", async () => {
+    const project = createProject({ name: "P", path: "/tmp/p" });
+    const task = createTask({
+      project_id: project.id,
+      title: "build feature",
+      description: "the original ask",
+      model: "claude-opus-4-7",
+      autonomy: "readonly",
+    });
+    const first = dispatchTask(task.id, {
+      providerFactory: () => sessionProvider("sess-A"),
+      isGitRepo: noGit,
+    });
+    await first.done;
+
+    let seen: AgentRunOptions | undefined;
+    const { done } = runFollowup(task.id, "continue", {
+      providerFactory: () =>
+        sessionProvider("sess-A", {
+          record: (o) => {
+            seen = o;
+          },
+        }),
+    });
+    await done;
+    // The steering turn keeps the same blast radius and model the session
+    // was started with — no silent escalation between turns.
+    expect(seen?.model).toBe("claude-opus-4-7");
+    expect(seen?.autonomy).toBe("readonly");
+  });
+});

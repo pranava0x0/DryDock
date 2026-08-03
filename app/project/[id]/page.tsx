@@ -67,6 +67,20 @@ export default function ProjectPage({
     void refresh();
   }, [refresh]);
 
+  // One-shot: a session kickoff lands here with ?stream=<taskId> so the
+  // viewer opens on arrival. Strip the param immediately so a refresh (or
+  // share of the URL) doesn't re-open a stale stream.
+  useEffect(() => {
+    const streamParam = new URLSearchParams(window.location.search).get(
+      "stream",
+    );
+    if (streamParam) {
+      setStreamTaskId(streamParam);
+      setStreamKey((k) => k + 1);
+      window.history.replaceState(null, "", `/project/${id}`);
+    }
+  }, [id]);
+
   const [autonomySaving, setAutonomySaving] = useState(false);
   const [autonomyError, setAutonomyError] = useState<string | null>(null);
   const handleAutonomyChange = useCallback(

@@ -5,6 +5,7 @@ import {
   FollowupError,
 } from "@/lib/orchestrator/dispatch";
 import { badRequest, conflict, notFound, ok, serverError } from "@/lib/api/json";
+import { rejectRemoteDispatch } from "@/lib/api/local-only";
 
 export const runtime = "nodejs";
 
@@ -27,6 +28,8 @@ export async function POST(
   request: NextRequest,
   ctx: RouteContext,
 ): Promise<Response> {
+  const localOnly = rejectRemoteDispatch(request);
+  if (localOnly) return localOnly;
   const { id } = await ctx.params;
   let body: unknown;
   try {
