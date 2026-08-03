@@ -251,7 +251,8 @@ npm run build          # production build, used by CI / before deploy
 | Adding... | Goes in |
 |---|---|
 | A new provider (e.g. `qwen`) | `lib/providers/<name>.ts` + register in `lib/providers/index.ts` + update `ProviderName` union in `types.ts` |
-| A new API route | `app/api/<...>/route.ts` with `export const runtime = "nodejs"` |
+| A new API route | `app/api/<...>/route.ts` with `export const runtime = "nodejs"`. Next validates route-module exports, so helpers/constants a route needs must live in `lib/` — a stray `export` from `route.ts` breaks the build. |
+| A test for an API route | `lib/<area>/<name>-route.test.ts` — vitest's include glob is `lib/**/*.test.ts` ONLY, so a test placed under `app/` silently never runs. Import the handler from `@/app/api/.../route` and call it with a hand-built `NextRequest` (pattern: `lib/orchestrator/sessions-route.test.ts`; note hand-built NextRequests carry no Host header — set it explicitly when the code under test reads it). |
 | A DB column | Update [lib/db/schema.sql](lib/db/schema.sql), the matching CRUD module, AND add an `ensure(...)` call in `migrate()` ([lib/db/index.ts](lib/db/index.ts)) so existing DBs pick it up |
 | A new global setting | Add the key constant somewhere it can be imported; add an entry to the `WRITABLE` allow-list in [app/api/settings/route.ts](app/api/settings/route.ts) if it should be user-toggleable; read via `getBooleanSetting` / `getNumberSetting` / `getSetting` |
 | A new UI component | `components/<Name>.tsx`; consult [design.md](design.md) before picking colors/spacing |
