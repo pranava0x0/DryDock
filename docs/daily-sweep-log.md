@@ -72,6 +72,22 @@ All nine of the actionable rows were written to the live backlog via
 4. Bot PRs are labelled `[bot]` inline so a daily auto-scrape repo
    (roboticsleadership pushes one PR/day) can be skimmed past rather than
    re-triaged.
+5. **Caught in self-review (PR #15):** the first cut ran both `gh search` calls
+   with `2>/dev/null`, so an expired token or a rate limit produced zero lines —
+   indistinguishable from today's genuine "zero open issues across all repos" —
+   and then *saved that empty result as the new baseline*, which would have made
+   every PR report as NEW on the next working run. Exit status is now checked
+   explicitly; a failure prints the actual `gh` error, marks the run PARTIAL, and
+   refuses to write the state file. This is the "failure that looks like success"
+   class CLAUDE.md names, found in the very tool built to avoid wasted re-reads.
+
+### Verification of the script itself
+
+| Case | Expected | Result |
+|---|---|---|
+| Fresh state file | every item listed as NEW | 44 of 44 ✓ |
+| Second consecutive run | empty NEW section | empty ✓ |
+| `gh` returning HTTP 401 | loud error, PARTIAL banner, state preserved | errors surfaced; state stayed at 44 fingerprints rather than being clobbered to the local-only 26 ✓ |
 
 ### For the next run
 

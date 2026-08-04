@@ -44,29 +44,50 @@ echo "=== DryDock daily sweep — $(date '+%Y-%m-%d %H:%M') ==="
 echo
 
 # ---------------------------------------------------------------- GitHub ----
-if command -v gh >/dev/null 2>&1; then
-  # Open PRs authored by a human (bot PRs are collapsed into one line each so a
-  # daily auto-scrape bot can't flood the report).
-  gh search prs --owner "$GH_OWNER" --state open --limit 60 \
-      --json repository,number,title,author \
-      --jq '.[]|"\(.repository.name)\t\(.number)\t\(.author.login)\t\(.title)"' 2>/dev/null |
-  while IFS=$'\t' read -r repo num author title; do
-    [ -n "${repo:-}" ] || continue
-    case "$author" in
-      *"[bot]") emit "pr:$repo#$num" "PR  $repo#$num [bot] $title" ;;
-      *)        emit "pr:$repo#$num" "PR  $repo#$num @$author $title" ;;
-    esac
-  done
+# A failed `gh` call and a genuinely empty result both produce zero lines, so
+# exit status is checked explicitly and a failure degrades the whole run to
+# partial. Without that, an expired token would look exactly like "no open
+# issues today" — and worse, the empty result would be saved as the new
+# baseline, making every PR report as NEW on the next working run.
+DEGRADED=0
 
-  gh search issues --owner "$GH_OWNER" --state open --limit 60 \
-      --json repository,number,title \
-      --jq '.[]|"\(.repository.name)\t\(.number)\t\(.title)"' 2>/dev/null |
-  while IFS=$'\t' read -r repo num title; do
-    [ -n "${repo:-}" ] || continue
-    emit "issue:$repo#$num" "ISS $repo#$num $title"
-  done
+gh_search() { # <subcommand> <jq> -> stdout, nonzero on failure
+  local sub="$1" jq="$2" err
+  err="$(mktemp)"
+  if ! gh search "$sub" --owner "$GH_OWNER" --state open --limit 60 \
+        --json repository,number,title,author --jq "$jq" 2>"$err"; then
+    echo "!! gh search $sub failed: $(tr '\n' ' ' < "$err")" >&2
+    rm -f "$err"; return 1
+  fi
+  rm -f "$err"; return 0
+}
+
+if command -v gh >/dev/null 2>&1; then
+  # Bot PRs are tagged inline rather than dropped, so a daily auto-scrape repo
+  # can be skimmed past instead of re-triaged, without hiding it entirely.
+  if prs="$(gh_search prs '.[]|"\(.repository.name)\t\(.number)\t\(.author.login)\t\(.title)"')"; then
+    while IFS=$'\t' read -r repo num author title; do
+      [ -n "${repo:-}" ] || continue
+      case "$author" in
+        *"[bot]") emit "pr:$repo#$num" "PR  $repo#$num [bot] $title" ;;
+        *)        emit "pr:$repo#$num" "PR  $repo#$num @$author $title" ;;
+      esac
+    done <<< "$prs"
+  else
+    DEGRADED=1
+  fi
+
+  if issues="$(gh_search issues '.[]|"\(.repository.name)\t\(.number)\t\(.title)"')"; then
+    while IFS=$'\t' read -r repo num title; do
+      [ -n "${repo:-}" ] || continue
+      emit "issue:$repo#$num" "ISS $repo#$num $title"
+    done <<< "$issues"
+  else
+    DEGRADED=1
+  fi
 else
   echo "!! gh not on PATH — skipping the GitHub half of the sweep" >&2
+  DEGRADED=1
 fi
 
 # ----------------------------------------------------------------- local ----
@@ -129,8 +150,15 @@ echo
 echo "--- FULL STATE ($(wc -l < "$CURRENT" | tr -d ' ') items) ---"
 cut -f2 "$CURRENT"
 
-if [ "$SAVE" = "1" ]; then
+echo
+if [ "$DEGRADED" = "1" ]; then
+  # Saving a partial sweep would silently drop the missing half's fingerprints
+  # and make them all look NEW next time. Report the gap instead.
+  echo "!! PARTIAL RUN — the GitHub half did not complete. State NOT saved;"
+  echo "!! treat the sections above as the local half only, and re-run once fixed."
+elif [ "$SAVE" = "1" ]; then
   cut -f1 "$CURRENT" | sort -u > "$STATE_FILE"
-  echo
-  echo "state saved to $STATE_FILE"
+  echo "state saved to $STATE_FILE ($(wc -l < "$STATE_FILE" | tr -d ' ') fingerprints)"
+else
+  echo "state not saved (--no-save)"
 fi
