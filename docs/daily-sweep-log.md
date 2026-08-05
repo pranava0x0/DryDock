@@ -188,3 +188,57 @@ correct at 36, and the state file stayed at 35 fingerprints (unclobbered).
   raising the priority rather than re-filing.
 - Consider teaching the script to flag *runs* of same-prefix bot PRs (N open from
   one repo) so the accumulation shows up as one NEW line instead of one per day.
+
+### Addendum — the sweep broke the thing it was auditing (DD-020)
+
+Filed as **DD-020** in [issues.md](../issues.md). Worth reading before the next run,
+because it changes what this routine is allowed to do.
+
+Correcting the long-open-PR task's title (`4` → `5`) turned out to mint a
+**phantom duplicate on every sync**. The count went 1 → 2 over two syncs and
+would have kept climbing; the `/backlog` page auto-syncs every 30 s, so an open
+tab would have run it away.
+
+The mechanism, confirmed by hashing the titles directly:
+
+```
+lineId("Close out 4 long-open personal PRs across repos") = 4c0e829060ca3bfc
+lineId("Close out 5 long-open personal PRs across repos") = a9a2764293b4a2c9
+row.external_id                                            = 4c0e829060ca3bfc  ← stale
+```
+
+`external_id` is a hash of the *rendered line text*, so a rename orphans it. The
+pull's by-external_id lookup misses, and neither rescue path fires: the by-title
+claim is gated on `external_id === null` (a renamed row's is non-null-but-stale),
+and the "Rename in Notes" 1-orphan/1-deferred heuristic only considers
+`source: "apple-notes"` rows, while UI/API-created rows are `source: "manual"`.
+So the line lands in `deferredCreates` and becomes a new row — again, every sync.
+
+The module docstring at `backlog.ts:225-229` says a UI rename "round-trips
+cleanly" via the by-title fallback. It doesn't. **The doc describes the intended
+design; the gate on line 311 prevents it.** That gap is why nothing caught this —
+the behaviour reads as correct in the comments and there's no test that renames a
+`manual` row and syncs twice.
+
+**Contained, not fixed.** Deleted the two phantoms (empty description, priority 0,
+created minutes earlier by this run — my own artifacts, not user data), then
+reverted the title to the exact original string so the hash matches again.
+Verified: two consecutive syncs at `pulledNew: 0`, 19 items, zero duplicate
+titles. The corrected count now lives in the item's *description*, which doesn't
+feed the hash, and the title carries a `TITLE IS DELIBERATELY STALE` marker.
+
+**New standing rule for this routine, until DD-020 is fixed: do not PATCH a
+backlog item's title.** Corrections go in the description. Filing new items with
+`POST` is safe — it stamps `external_id = lineId(title)` at creation, so those
+round-trip correctly (verified: filing the DD-020 task itself synced at
+`pulledNew: 0`).
+
+Two things this run got wrong that are worth naming:
+
+1. **I kept syncing while diagnosing.** The delete-then-sync attempt *added* a
+   phantom rather than removing one, because each sync re-mints. Should have
+   stopped mutating at the first unexplained `pulledNew: 1` and read the code —
+   which is what finally settled it in about two minutes.
+2. **`pulledNew: 1` was reported and nearly waved through** as a benign note-side
+   edit. It was the bug announcing itself. Any non-zero `pulledNew` on a run
+   where nobody touched the Notes app is a defect until proven otherwise.

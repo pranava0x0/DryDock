@@ -6,8 +6,7 @@ Per universal CLAUDE.md: every bug encounter and fix gets logged here. Active ta
 
 | ID | Date | Area | Description | Severity | Size | Cause | Status |
 |---|---|---|---|---|---|---|---|
-
-*(none right now — new encounters go here)*
+| DD-020 | 2026-08-05 | Apple Notes sync | **Renaming a backlog item's title in the UI mints a phantom duplicate on every subsequent sync.** Found by the daily sweep when it corrected one task's title: each `POST /api/backlog/sync` added another empty-description, priority-0 copy (1 → 2 over two syncs; unbounded). The `/backlog` page's 30 s auto-sync makes this a runaway. | High | S | `external_id` is `lineId(title)` — a SHA-1 of the rendered line text. Renaming leaves the row's `external_id` pointing at the **old** title's hash, so the pull's by-external_id lookup misses. The by-title fallback that the module docstring promises will "re-claim it with the new external_id" is gated on `sameTitle.external_id === null` ([backlog.ts:311](lib/orchestrator/backlog.ts:311)), and a renamed row's is non-null-but-stale — so it falls through to `deferredCreates` and mints a new row. The "Rename in Notes" 1-orphan/1-deferred rescue can't catch it either: that filter requires `source === "apple-notes"` ([backlog.ts:336](lib/orchestrator/backlog.ts:336)) and UI-created rows are `source: "manual"`. **The documented contract at [backlog.ts:225-229](lib/orchestrator/backlog.ts:225) describes behaviour the code does not implement.** | Open — contained, not fixed. Phantoms deleted and the title reverted to the original string so `external_id` matches again; two consecutive syncs then reported `pulledNew: 0` at 19 items. Likely fix: let the by-title claim also adopt a row whose non-null `external_id` is absent from the current pull (restamping it), which is exactly the documented "Rename in UI" path. Needs a regression test that renames a `source: "manual"` row and syncs twice. |
 
 ## Resolved Summary
 
