@@ -59,6 +59,14 @@ updates:
       - dependency-name: "next"
         update-types:
           ["version-update:semver-major", "version-update:semver-minor"]
+      # `eslint-config-next` ships in lockstep with `next` and must track it.
+      # Without this, the majors group swept it to 16.2.12 against a `next`
+      # pinned at 15.x (PR #20) — a pairing that is wrong by construction.
+      # Ignoring `next` alone was not enough: the sibling has to be ignored
+      # on the same terms, or the pin leaks.
+      - dependency-name: "eslint-config-next"
+        update-types:
+          ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
