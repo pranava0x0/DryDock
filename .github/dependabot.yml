@@ -12,19 +12,44 @@ updates:
       # never lags a batch by more than a few days.
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    # 3, not 5. The five PRs of 2026-07-27 sat untouched for nine days and
+    # hit this cap exactly — which also means further bumps were being
+    # suppressed behind it. A lower cap makes a stalled queue visible as a
+    # stalled queue instead of letting it masquerade as a full one.
+    open-pull-requests-limit: 3
     # Malicious npm versions are usually caught and unpublished within
     # hours-to-days. Waiting 3 days before proposing an upgrade puts the
     # community's detection window in front of this repo — the single
     # highest-leverage setting per vibe-coding-security's npm-hardening.
     cooldown:
       default-days: 3
+    # Three groups, not one. The original config grouped only dev
+    # minor/patch, which on 2026-07-27 caught 2 of 6 bumps and let the
+    # other four open as singletons: react-dom (production), nanoid
+    # (production + major), @types/node and vitest (dev, but major).
+    # `applies-to: version-updates` is the default and is stated
+    # explicitly here so the "security updates stay ungrouped" intent
+    # below is enforced by the file rather than by the default.
     groups:
-      # One PR for the routine churn. Security upgrades are deliberately
-      # NOT grouped — those want their own reviewable PR.
+      production-dependencies:
+        applies-to: version-updates
+        dependency-type: "production"
+        update-types: ["minor", "patch"]
       dev-dependencies:
+        applies-to: version-updates
         dependency-type: "development"
         update-types: ["minor", "patch"]
+      # Majors arrive together on purpose. Grouped, they are one PR that
+      # gets read and validated as a unit; ungrouped, they are N PRs that
+      # each need their own upgrade decision and so get none — which is
+      # exactly how three majors sat open for nine days. The tradeoff is
+      # real: a grouped major PR that breaks is harder to attribute, so
+      # bisect by dropping one line from package.json and reinstalling.
+      major-upgrades:
+        applies-to: version-updates
+        update-types: ["major"]
+    # Security upgrades are deliberately NOT grouped — those want their
+    # own reviewable PR, which the `applies-to` fields above guarantee.
     ignore:
       # `next` is exact-pinned on purpose (DD-016): security batches are a
       # deliberate upgrade with a full test + build + auth re-verification,
