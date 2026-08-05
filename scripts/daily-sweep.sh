@@ -148,7 +148,19 @@ fi
 echo
 
 echo "--- FULL STATE ($(wc -l < "$CURRENT" | tr -d ' ') items) ---"
-cut -f2 "$CURRENT"
+# NOTRK (no upstream) is the permanent resting state of every local-only
+# project, so listing all of them every day is pure noise. Collapse to a count
+# here; the fingerprints are still tracked, so a repo that newly gains or loses
+# an upstream still shows up by name in the NEW section above.
+if [ "$FULL" = "1" ]; then
+  cut -f2 "$CURRENT"
+else
+  cut -f2 "$CURRENT" | grep -v '^NOTRK ' || true
+  notrk=$(grep -c '^notrack:' "$CURRENT" || true)
+  if [ "${notrk:-0}" -gt 0 ]; then
+    echo "NOTRK  ${notrk} local-only checkout(s) with no upstream (collapsed; --full lists them)"
+  fi
+fi
 
 echo
 if [ "$DEGRADED" = "1" ]; then
