@@ -97,3 +97,94 @@ All nine of the actionable rows were written to the live backlog via
   `GET /api/backlog` is one call and is cheaper than re-deriving them.
 - The `NOTRK` (no upstream) list is 9 repos and is almost certainly permanent
   for local-only projects. If it's still 9 next run, stop reporting it.
+
+---
+
+## 2026-08-05 — second run (first run off the script)
+
+Ran `git pull --ff-only` (3 commits behind: the Dependabot consolidation work),
+then `scripts/daily-sweep.sh`. Whole discovery pass was one script call —
+no subagents, no per-repo `gh` round-trips.
+
+**NEW SINCE LAST RUN — 3 items**, against 35 known fingerprints:
+
+| New item | Read as |
+|---|---|
+| `nucleardeployment#4` — "Plan the LWR and SMR refocus against measured scope impact" | Opened today by the user. Proposal-only, and it ends with **three blocking scope questions**. Not stale; it's live work waiting on a decision. |
+| `nucleardeployment#5` — "Plan the SMR gigawatt race and add the company research base" | Opened today by the user, 983 additions. Same story — hours old, not a sweep finding. |
+| `roboticsleadership#149` — `[bot] data(news): auto-scrape 2026-08-04` | The seventh consecutive unmerged auto-scrape PR. **This one is a finding.** |
+
+Everything else in FULL STATE was unchanged from yesterday and was not re-read.
+
+### The one genuinely new finding
+
+`roboticsleadership` has opened one auto-scrape PR per day since 2026-07-30 —
+#143, #144, #145, #146, #147, #148, #149 — and **none have merged**. No CI checks
+run on any of them, so nothing is mechanically blocking the queue; the pipeline
+just has no merge step. Net effect: the published robotics data is ~6 days stale
+while seven PRs sit there looking like the pipeline is working. That's the
+"failure that looks like success" shape CLAUDE.md names — a scraper that runs
+daily, succeeds daily, and publishes nothing.
+
+Yesterday's run saw six of these and deliberately skimmed past them as bot noise.
+Seven days with zero merges is a pattern rather than a blip, so it became a task
+today. Filed, not fixed — and explicitly *not* bulk-closed, since the user isn't
+present.
+
+### Backlog corrections (the point of the routine)
+
+`GET /api/backlog` first, per the checklist, so nothing was re-filed. All 9 of
+yesterday's tasks were still open; two needed correcting rather than duplicating:
+
+- **"Triage 5 stale Dependabot PRs on DryDock (#9-#13)" → `done`.** Resolved
+  while the sweep wasn't looking: PRs #16, #17, #21 merged and #18/#19/#20/#22
+  closed. DryDock now has **0 open PRs**. Marking done is reversible and is what
+  "keep the backlog honest" means; nothing was deleted.
+- **"Close out 4 long-open personal PRs" → retitled to 5 and rewritten.** Its
+  description named `nucleardeployment#1`, which has since been closed, and
+  missed #4 and #5. Now lists the real set and records that #4 is blocked on
+  three named scope questions.
+
+One new task filed: the roboticsleadership merge-step gap. Backlog went 18 → 19
+items.
+
+**Apple Notes:** `pushedItems: 18, pulledNew: 0, pulledUpdated: 0` — clean, no
+note-side edits to reconcile.
+
+**GitHub mirror:** read the field rather than assuming — `status: "disabled",
+reason: "no tracker repo configured"`. Same undecided call as yesterday, already
+tracked as its own task.
+
+### Deliberately not done
+
+- **Did not file the two nuclear PRs as tasks.** They're hours old and are the
+  user's own in-flight work. Folding them into the existing long-open-PR task
+  keeps them visible without inventing a duplicate; if they go quiet they'll
+  age into that task on their own.
+- **Did not touch the 6 May test rows, 2 stale branches, or 7 bot PRs.** All
+  still safe to delete, still not deleted — no user present to confirm.
+- **Did not re-derive FULL STATE.** 32 unchanged rows were read as context and
+  nothing more, which is the whole point of the fingerprint diff.
+
+### Routine improvement shipped this run
+
+Yesterday's note said: *if the NOTRK list is still 9 next run, stop reporting it.*
+It was 8, and it's the permanent resting state of every local-only project — so
+FULL STATE now collapses it to a single count line instead of eight. The
+fingerprints are unchanged, so a checkout that newly gains or loses an upstream
+still surfaces **by name** in the NEW section; only the daily restatement is
+suppressed. `--full` still lists them.
+
+Verified with `--no-save`: 8 NOTRK lines → 1 summary line, item count still
+correct at 36, and the state file stayed at 35 fingerprints (unclobbered).
+
+### For the next run
+
+- Same starting point: `scripts/daily-sweep.sh`, read only the NEW section.
+- Check `nucleardeployment#4`/`#5` — if either is still open and unanswered in a
+  week, the long-open-PR task is where it belongs, not a new one.
+- The bot-PR count is the thing to watch. If `roboticsleadership` is at 8+ open
+  auto-scrape PRs next run, the filed task didn't get picked up and it's worth
+  raising the priority rather than re-filing.
+- Consider teaching the script to flag *runs* of same-prefix bot PRs (N open from
+  one repo) so the accumulation shows up as one NEW line instead of one per day.
