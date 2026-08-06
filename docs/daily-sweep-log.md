@@ -371,9 +371,14 @@ Verified with `--no-save`: 8 bot lines → 1, item count 35 → 29 (−7 collaps
 ### For the next run
 
 - Same starting point: `scripts/daily-sweep.sh`, read only the NEW section.
-- **The collapsed bot line will read as NEW once more** on the next run that
-  saves state, because `botrun:roboticsleadership:N` replaces eight retired
-  `pr:` fingerprints. That first sighting is the scheme changing, not the pile.
+- **The fingerprint-scheme transition is already absorbed.** After committing,
+  this run was re-run with state saved, so `botrun:roboticsleadership:8` is
+  baselined and the eight retired `pr:` fingerprints are gone. Next run's NEW
+  section is clean — the bot line will reappear only if the count actually
+  moves off 8.
+- That same save also baselined two **self-referential** rows: this branch and
+  `DryDock#27`. Both retire on merge, so expect them to vanish rather than to
+  need triage. A sweep that opens a PR will always see its own PR next run.
 - The bot-PR task is at p62 now. If the count is still 8+ *after* the user has
   seen it at that priority, stop re-reporting it and leave it to the backlog —
   raising it twice would just be nagging through a different channel.
