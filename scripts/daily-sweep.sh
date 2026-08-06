@@ -14,6 +14,14 @@
 # Usage:  scripts/daily-sweep.sh [--full] [--no-save]
 set -uo pipefail
 
+# Piping this into `head` (or quitting `less` early) closes stdout, and the
+# next echo would kill the script on SIGPIPE — *before* it reaches the state
+# save at the bottom. The run then looks like it completed while silently
+# leaving the fingerprints unadvanced, so the next run re-reports everything
+# as NEW. Ignoring SIGPIPE lets the writes fail harmlessly and the save still
+# happen. (`set -e` is deliberately not enabled, so a failed echo won't abort.)
+trap '' PIPE
+
 GH_OWNER="${GH_OWNER:-pranava0x0}"
 PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/Projects}"
 STATE_DIR="${DRYDOCK_STATE_DIR:-$HOME/.drydock}"
@@ -91,10 +99,17 @@ if command -v gh >/dev/null 2>&1; then
         [ -n "${botrepo:-}" ] || continue
         count="$(awk -F'\t' -v r="$botrepo" '$1==r' "$BOTPRS" | wc -l | tr -d ' ')"
         if [ "$count" -ge "$BOT_RUN_MIN" ]; then
+          # Cap the enumerated numbers: `gh search --limit 60` means this could
+          # otherwise render a 60-number line, which is the noise this pass
+          # exists to remove. The count is the signal; the numbers are a hint
+          # for finding them.
           nums="$(awk -F'\t' -v r="$botrepo" '$1==r {printf "#%s ", $2}' "$BOTPRS" \
-                  | sed 's/ $//; s/ /, /g')"
+                  | cut -d' ' -f1-8 | sed 's/ $//; s/ /, /g')"
+          if [ "$count" -gt 8 ]; then nums="$nums, +$((count - 8)) more"; fi
+          # Deliberately "open", not "none merged" — the script checks open PRs
+          # and has not looked at merge history, so it must not claim to have.
           emit "botrun:$botrepo:$count" \
-               "PR  $botrepo — $count open [bot] PRs, none merged ($nums)"
+               "PR  $botrepo — $count open [bot] PRs ($nums)"
         else
           awk -F'\t' -v r="$botrepo" '$1==r {print $2"\t"$3}' "$BOTPRS" \
           | while IFS=$'\t' read -r num title; do

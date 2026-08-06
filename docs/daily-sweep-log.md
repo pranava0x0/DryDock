@@ -366,16 +366,53 @@ per the standing rule. Two consequences, both intended:
   never hidden by this.
 
 Verified with `--no-save`: 8 bot lines → 1, item count 35 → 29 (−7 collapsed,
-+1 for this repo going dirty from the edit itself), state file left alone.
++1 for this repo going dirty from the edit itself), state file left alone. Then
+exercised directly against a synthetic fixture at 12 / 3 / 1 bot PRs to check
+all three branches: capped-with-`+4 more`, collapsed-at-the-threshold, and
+left-alone-below-it.
+
+Two defects in that first cut, both caught reviewing my own diff:
+
+- The line read **"N open [bot] PRs, none merged"**. The script only queries
+  *open* PRs — it never looked at merge history, so "none merged" was a claim
+  it had no basis for. True for `roboticsleadership` today, but a repo with 3
+  open bot PRs and 200 merged ones would have been described as a stalled
+  pipeline, and a future run would file a task on it. Now reads "N open".
+- **No cap on the enumerated numbers.** `gh search --limit 60` means one repo
+  could render a 60-number line — the exact noise this pass exists to delete.
+  Capped at 8 with `+N more`.
+
+### Second routine fix — the sweep can die before it saves
+
+Found the hard way: **`scripts/daily-sweep.sh | head -12` kills the run before
+the state save.** `head` exits, stdout closes, the next `echo` takes SIGPIPE,
+and the script dies at the bottom of the output — after printing everything
+that makes it look like a complete run, and before writing
+`~/.drydock/sweep-state.txt`.
+
+I did this to myself mid-run: piped a real save-enabled run into `head -12`,
+saw normal-looking output, and only noticed the state was untouched when a
+fingerprint I had just baselined still reported as NEW. Another instance of the
+house bug class — *the unhappy path is indistinguishable from the happy one*.
+The failure direction is safe (items get re-reported, never dropped), but it
+silently wastes the next run.
+
+Fixed with `trap '' PIPE` at the top, so the writes fail harmlessly and the run
+still reaches the save. Verified: `daily-sweep.sh | head -3` now leaves a
+*changed* state file (hash compared before/after).
+
+**Standing note for this routine: never pipe the sweep into `head` or `less`
+on a save-enabled run.** The trap covers it now, but redirect to a file and read
+that if you want to skim — `> /tmp/sweep.txt`.
 
 ### For the next run
 
 - Same starting point: `scripts/daily-sweep.sh`, read only the NEW section.
-- **The fingerprint-scheme transition is already absorbed.** After committing,
-  this run was re-run with state saved, so `botrun:roboticsleadership:8` is
-  baselined and the eight retired `pr:` fingerprints are gone. Next run's NEW
-  section is clean — the bot line will reappear only if the count actually
-  moves off 8.
+- **The fingerprint-scheme transition is absorbed.** `botrun:roboticsleadership:8`
+  is baselined and the eight `pr:roboticsleadership#NNN` fingerprints are
+  retired (confirmed: zero left in the state file). A final `--no-save` run
+  printed an **empty NEW section**, so the next run starts quiet and the bot
+  line reappears only if the count actually moves off 8.
 - That same save also baselined two **self-referential** rows: this branch and
   `DryDock#27`. Both retire on merge, so expect them to vanish rather than to
   need triage. A sweep that opens a PR will always see its own PR next run.
