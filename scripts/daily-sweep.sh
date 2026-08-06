@@ -33,7 +33,8 @@ mkdir -p "$STATE_DIR"
 [ -f "$STATE_FILE" ] || : > "$STATE_FILE"
 
 CURRENT="$(mktemp)"
-trap 'rm -f "$CURRENT"' EXIT
+BOTPRS="$(mktemp)"
+trap 'rm -f "$CURRENT" "$BOTPRS"' EXIT
 
 # emit <fingerprint> <human-readable line>
 # The fingerprint is what gets diffed run-to-run, so it must change only when
@@ -62,17 +63,46 @@ gh_search() { # <subcommand> <jq> -> stdout, nonzero on failure
   rm -f "$err"; return 0
 }
 
+BOT_RUN_MIN=3   # this many open bot PRs in one repo collapses them to a run
+
 if command -v gh >/dev/null 2>&1; then
   # Bot PRs are tagged inline rather than dropped, so a daily auto-scrape repo
   # can be skimmed past instead of re-triaged, without hiding it entirely.
+  # They're buffered rather than emitted, because a repo with a daily scraper
+  # produces one NEW line per day for what is really one standing condition
+  # ("nothing merges these"). See the run-collapsing pass below.
   if prs="$(gh_search prs '.[]|"\(.repository.name)\t\(.number)\t\(.author.login)\t\(.title)"')"; then
     while IFS=$'\t' read -r repo num author title; do
       [ -n "${repo:-}" ] || continue
       case "$author" in
-        *"[bot]") emit "pr:$repo#$num" "PR  $repo#$num [bot] $title" ;;
+        *"[bot]") printf '%s\t%s\t%s\n' "$repo" "$num" "$title" >> "$BOTPRS" ;;
         *)        emit "pr:$repo#$num" "PR  $repo#$num @$author $title" ;;
       esac
     done <<< "$prs"
+
+    # Collapse each repo's bot PRs into one line once there are BOT_RUN_MIN+ of
+    # them. The fingerprint carries the *count*, so the run reports as NEW only
+    # when the pile actually grows or shrinks — a one-in-one-out day (an old PR
+    # merges, a new one opens) is not a change in the situation and correctly
+    # stays quiet. Below the threshold each PR still gets its own line, so a
+    # lone Dependabot bump is never hidden.
+    if [ -s "$BOTPRS" ]; then
+      while read -r botrepo; do
+        [ -n "${botrepo:-}" ] || continue
+        count="$(awk -F'\t' -v r="$botrepo" '$1==r' "$BOTPRS" | wc -l | tr -d ' ')"
+        if [ "$count" -ge "$BOT_RUN_MIN" ]; then
+          nums="$(awk -F'\t' -v r="$botrepo" '$1==r {printf "#%s ", $2}' "$BOTPRS" \
+                  | sed 's/ $//; s/ /, /g')"
+          emit "botrun:$botrepo:$count" \
+               "PR  $botrepo — $count open [bot] PRs, none merged ($nums)"
+        else
+          awk -F'\t' -v r="$botrepo" '$1==r {print $2"\t"$3}' "$BOTPRS" \
+          | while IFS=$'\t' read -r num title; do
+              emit "pr:$botrepo#$num" "PR  $botrepo#$num [bot] $title"
+            done
+        fi
+      done < <(cut -f1 "$BOTPRS" | sort -u)
+    fi
   else
     DEGRADED=1
   fi
