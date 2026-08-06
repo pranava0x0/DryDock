@@ -242,3 +242,185 @@ Two things this run got wrong that are worth naming:
 2. **`pulledNew: 1` was reported and nearly waved through** as a benign note-side
    edit. It was the bug announcing itself. Any non-zero `pulledNew` on a run
    where nobody touched the Notes app is a defect until proven otherwise.
+
+---
+
+## 2026-08-06 — third run
+
+`git pull --ff-only` was already up to date. One `scripts/daily-sweep.sh` call
+did the discovery pass — no subagents, no per-repo `gh` round-trips.
+
+**NEW SINCE LAST RUN — 3 items**, against 35 known fingerprints:
+
+| New item | Read as |
+|---|---|
+| `nucleardeployment#7` — "Capture session learnings and queue the post-merge review findings" | Opened by the user four hours before this run. Docs-only (37 additions, 4 files, zero app code). **Not a finding** — too new to chase, and it is the `/learnings` output of an active session. |
+| `roboticsleadership#151` — `[bot] data(news): auto-scrape 2026-08-05` | The **eighth** consecutive unmerged auto-scrape PR. Not a new finding — it is yesterday's finding getting worse, which is exactly the trigger the 2026-08-05 run armed. |
+| `SYNC Nuclear Deployment [main] 0 ahead / 25 behind` | **The one genuinely new finding.** See below. |
+
+Everything else in FULL STATE was unchanged and was not re-read.
+
+### The one genuinely new finding — stale local checkouts
+
+`Nuclear Deployment` newly appearing at 25-behind is worth more than the row
+suggests, because it is the repo with the *active* work: PR #7 landed there
+today. A session starting from that tree reads a `main` that is 25 commits old.
+That is precisely the setup for the 2026-08-05 orphan-branch lesson — duplicate
+IDs and conflicting work come from stale trees, not from bad intentions.
+
+Checking it turned one row into a class. Five checkouts are behind, and all five
+are **0 ahead**, so every one is a no-risk fast-forward:
+
+| Checkout | Behind | Clean? |
+|---|---|---|
+| Nuclear Deployment | 25 | clean |
+| FERC Document Analysis | 13 | 5 uncommitted |
+| FERC Show Cause Orders | 7 | clean |
+| Personal Website | 6 | clean |
+| Settle | 4 | clean |
+
+Filed as **one** item (`3YnFTnd9BFBeWWlG24aju`, priority 52) rather than five
+rows. Only Nuclear Deployment was new to the fingerprint set; the other four
+have been sitting in FULL STATE unremarked, which is the failure mode of a
+"only look at NEW" routine — a slowly-accumulating class never trips the diff,
+because each member joined on a different day. Worth watching for elsewhere.
+
+**Not pulled.** Four of the five would have been a safe one-liner, but running
+`git pull` inside other projects' checkouts is outside this routine's remit, and
+FERC Document Analysis has 5 uncommitted files that need the user's call.
+
+### Backlog corrections
+
+`GET /api/backlog` first, per the routine, so nothing got re-filed under a new id.
+
+- **`OuCH4PJ5nbwt` — roboticsleadership bot PRs: priority 0 → 62.** The
+  2026-08-05 run set an explicit trigger ("if it is at 8+ next run, raise the
+  priority rather than re-file"). It was at 8. Raised rather than re-filed, and
+  the description now carries the full list and the ~7-day staleness. The
+  priority-0 it was filed at was a filing slip — every other real row has a real
+  priority, so it sorted below six May test rows.
+- **`c9meeDCfhKg98P7rIFf0l` — long-open PRs: description refreshed.**
+  `nucleardeployment#4` and `#5` have **closed** since yesterday, which also
+  retires the three blocking scope questions recorded against #4. Four personal
+  PRs are open now, but only `dcelectionstracker#21` (~8 weeks) and
+  `teaching-ideas#1` (3 weeks) are genuinely long-open.
+
+**No title was PATCHed** — DD-020's standing rule held. Both edits went to
+`description` and `priority`, and the run confirmed *why* that is the right
+line: `renderAppleNoteBody` puts only `title` (plus a stripped ` · added` suffix)
+into the note, so `lineId` hashes the title alone. Priority and description are
+not in the hash and cannot orphan an `external_id`. That is now verified rather
+than assumed.
+
+### Apple Notes sync
+
+Synced **twice** — once after filing, once to prove stability, because DD-020
+showed that re-minting only reveals itself on the second pass.
+
+```
+sync 1: pushedItems 21, pulledNew 0, pulledUpdated 0
+sync 2: pushedItems 21, pulledNew 0, pulledUpdated 0
+```
+
+21 items, **zero duplicate titles, zero null `external_id`s**. The new row was
+stamped `external_id = ca68d1b4bbaad89c` at POST, so it round-trips.
+
+**`mirror.status` was read, not assumed: `disabled`** — "no tracker repo
+configured (Settings → Backlog mirror)". So the GitHub mirror did **not** run
+this sweep. That is the already-filed item "Configure the DryDock backlog GitHub
+mirror" (p65), not a new failure — but it is worth restating that a green sync
+here covers Apple Notes only.
+
+### Deliberately not done
+
+- **Did not merge the 8 bot PRs**, or any of them. Bot-authored and data-only,
+  but bulk-merging eight PRs unattended is the user's call.
+- **Did not pull the five behind checkouts** (above).
+- **Did not touch `nucleardeployment#7`.** Its body reports 14 review findings
+  live on main and on the deployed site — that is queued in *that* repo's
+  backlog and is not DryDock's to re-file.
+- **Did not delete the six May test rows** or any stale branch. Standing rule.
+- **Did not re-derive FULL STATE.** 32 unchanged rows were context, not a
+  worklist.
+
+### Routine improvement shipped this run
+
+Yesterday's note asked for exactly this: *teach the script to flag runs of
+same-prefix bot PRs so the accumulation shows up as one NEW line instead of one
+per day.* Today made the case — `#151` was the eighth line for one condition.
+
+`scripts/daily-sweep.sh` now buffers bot PRs and collapses them per repo once
+there are `BOT_RUN_MIN` (3) or more:
+
+```
+PR  roboticsleadership — 8 open [bot] PRs, none merged (#151, #149, ... #143)
+```
+
+The fingerprint is `botrun:<repo>:<count>`, so it encodes **state, not dates** —
+per the standing rule. Two consequences, both intended:
+
+- The run reports as NEW only when the pile actually **grows or shrinks**. A
+  one-in-one-out day (an old PR merges, a new one opens, count unchanged) is not
+  a change in the situation and correctly stays silent.
+- Below 3, each bot PR still gets its own line, so a lone Dependabot bump is
+  never hidden by this.
+
+Verified with `--no-save`: 8 bot lines → 1, item count 35 → 29 (−7 collapsed,
++1 for this repo going dirty from the edit itself), state file left alone. Then
+exercised directly against a synthetic fixture at 12 / 3 / 1 bot PRs to check
+all three branches: capped-with-`+4 more`, collapsed-at-the-threshold, and
+left-alone-below-it.
+
+Two defects in that first cut, both caught reviewing my own diff:
+
+- The line read **"N open [bot] PRs, none merged"**. The script only queries
+  *open* PRs — it never looked at merge history, so "none merged" was a claim
+  it had no basis for. True for `roboticsleadership` today, but a repo with 3
+  open bot PRs and 200 merged ones would have been described as a stalled
+  pipeline, and a future run would file a task on it. Now reads "N open".
+- **No cap on the enumerated numbers.** `gh search --limit 60` means one repo
+  could render a 60-number line — the exact noise this pass exists to delete.
+  Capped at 8 with `+N more`.
+
+### Second routine fix — the sweep can die before it saves
+
+Found the hard way: **`scripts/daily-sweep.sh | head -12` kills the run before
+the state save.** `head` exits, stdout closes, the next `echo` takes SIGPIPE,
+and the script dies at the bottom of the output — after printing everything
+that makes it look like a complete run, and before writing
+`~/.drydock/sweep-state.txt`.
+
+I did this to myself mid-run: piped a real save-enabled run into `head -12`,
+saw normal-looking output, and only noticed the state was untouched when a
+fingerprint I had just baselined still reported as NEW. Another instance of the
+house bug class — *the unhappy path is indistinguishable from the happy one*.
+The failure direction is safe (items get re-reported, never dropped), but it
+silently wastes the next run.
+
+Fixed with `trap '' PIPE` at the top, so the writes fail harmlessly and the run
+still reaches the save. Verified: `daily-sweep.sh | head -3` now leaves a
+*changed* state file (hash compared before/after).
+
+**Standing note for this routine: never pipe the sweep into `head` or `less`
+on a save-enabled run.** The trap covers it now, but redirect to a file and read
+that if you want to skim — `> /tmp/sweep.txt`.
+
+### For the next run
+
+- Same starting point: `scripts/daily-sweep.sh`, read only the NEW section.
+- **The fingerprint-scheme transition is absorbed.** `botrun:roboticsleadership:8`
+  is baselined and the eight `pr:roboticsleadership#NNN` fingerprints are
+  retired (confirmed: zero left in the state file). A final `--no-save` run
+  printed an **empty NEW section**, so the next run starts quiet and the bot
+  line reappears only if the count actually moves off 8.
+- That same save also baselined two **self-referential** rows: this branch and
+  `DryDock#27`. Both retire on merge, so expect them to vanish rather than to
+  need triage. A sweep that opens a PR will always see its own PR next run.
+- The bot-PR task is at p62 now. If the count is still 8+ *after* the user has
+  seen it at that priority, stop re-reporting it and leave it to the backlog —
+  raising it twice would just be nagging through a different channel.
+- Watch for the failure mode this run surfaced: **a class that accumulates one
+  member per day never trips the NEW diff.** The five behind-checkouts hid in
+  FULL STATE for days that way. If a future run has an empty NEW section, that
+  is a good moment to skim FULL STATE for a group that has quietly grown —
+  which is the one legitimate reason to read it.
