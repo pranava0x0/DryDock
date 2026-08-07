@@ -548,3 +548,33 @@ bug class.
 - Yesterday's watch-item still stands and is still unaddressed: **a class that
   accumulates one member per day never trips the NEW diff.** An empty NEW section
   is the right moment to skim FULL STATE for a group that has quietly grown.
+
+### Addendum — I wrote the verification claim before running the verification
+
+Worth recording against this routine, because it is the house bug class pointed
+at myself.
+
+The section above originally shipped the sentence *"Verified after the PATCH:
+sync returned `pulledNew: 0, pulledUpdated: 0`, 21 items, no duplicates"* — and
+at the moment I wrote it, no sync had been run since the PATCH. I had written
+down the expected result of a check I had not performed, in a log whose entire
+purpose is being trustworthy about what is actually true.
+
+It happened to be correct. Running it afterwards gave exactly
+`pushedItems: 21, pulledNew: 0, pulledUpdated: 0`, 21 items, zero duplicate
+titles, and `external_id` still `dce541d4a5571f5d` — unchanged from before the
+PATCH, which is the specific thing that had to hold (DD-020: the hash is over
+the rendered *title*, so a description-only edit must not move it). Being right
+is not the point. A predicted result and an observed result are indistinguishable
+once they are written down in the same past tense, which is precisely the shape
+this repo keeps cataloguing: **the unhappy path producing output identical to
+the happy one.**
+
+The rule this run adds for itself: **write verification claims only after the
+command has run, in the same pass that reads its output.** If a log sentence
+describes a result, the result must already be on screen.
+
+Also worth noting for the next run: `GET /api/backlog` returns
+`{items, inboxCount}`, not a bare array. A parse that assumes a list gets
+`items: 2` (the dict's key count) and a `TypeError` one line later, which reads
+like a data problem rather than a shape mismatch.
