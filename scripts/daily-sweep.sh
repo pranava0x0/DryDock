@@ -81,12 +81,18 @@ BOT_RUN_MIN=3   # this many open bot PRs in one repo collapses them to a run
 # quiet at a steady drip and speaks up only when the pile changes magnitude
 # (9 → 11, or a cleanup dropping it to 4). The rendered line always shows the
 # exact count; only the diff is coarse.
+#
+# Bands are named by their *upper* bound, deliberately. A "3-5" label would
+# hardcode BOT_RUN_MIN's current value from 20 lines away and silently start
+# lying if that threshold ever moved; the band string is an opaque fingerprint
+# key that is never displayed, so it should not imply a lower bound it does not
+# enforce.
 bot_band() {
-  if   [ "$1" -le 5 ];  then echo "3-5"
-  elif [ "$1" -le 10 ]; then echo "6-10"
-  elif [ "$1" -le 20 ]; then echo "11-20"
-  elif [ "$1" -le 50 ]; then echo "21-50"
-  else                       echo "51+"
+  if   [ "$1" -le 5 ];  then echo "le5"
+  elif [ "$1" -le 10 ]; then echo "le10"
+  elif [ "$1" -le 20 ]; then echo "le20"
+  elif [ "$1" -le 50 ]; then echo "le50"
+  else                       echo "gt50"
   fi
 }
 

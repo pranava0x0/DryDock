@@ -459,15 +459,22 @@ this routine says to put it in the *script*.
 The count is now banded before it is fingerprinted:
 
 ```
-bot_band: 3-5 | 6-10 | 11-20 | 21-50 | 51+
+bot_band: le5 | le10 | le20 | le50 | gt50
 emit "botrun:$botrepo:$(bot_band "$count")"  "PR  $botrepo — $count open [bot] PRs (…)"
 ```
 
 The rendered line still shows the **exact** count — only the diff is coarse. So
 the drip goes quiet, and the line speaks up again only when the pile changes
 magnitude (10 → 11, or a cleanup dropping it to 4). Boundaries were checked
-directly against the extracted function at 3/5/6/8/9/10/11/20/21/50/51/120 — all
-twelve land in the intended band.
+directly against the extracted function at 1/2/3/5/6/8/9/10/11/20/21/50/51/120 —
+all fourteen land in the intended band.
+
+Bands are named by their **upper** bound (`le10`), not as ranges (`6-10`). That
+was a defect caught reviewing my own diff before anything was baselined: a
+`3-5` label hardcodes `BOT_RUN_MIN`'s current value from twenty lines away and
+would start silently lying if that threshold ever moved. The band string is an
+opaque fingerprint key that is never displayed, so it should not imply a lower
+bound it does not enforce.
 
 **This is the second instance of one bug class in two days.** Yesterday: a
 fingerprint containing a date makes every line new every day. Today: a
@@ -482,8 +489,8 @@ finer-grained than the change you would actually act on.**
 The 06:11 run saw 9; the 08:45 verification run saw 10 — `#153`, that morning's
 auto-scrape, opened between the two. Worth recording because it is direct
 confirmation of the drip rather than an inference from the log, and because it
-means **10 is already at the top of the `6-10` band**: expect one more NEW line
-tomorrow as it crosses into `11-20`, and then silence until 21. That single
+means **10 is already at the top of the `le10` band**: expect one more NEW line
+tomorrow as it crosses into `le20`, and then silence until 21. That single
 crossing is correct behaviour, not a regression — it is the pile changing
 magnitude, which is exactly what the band is for.
 
@@ -529,14 +536,14 @@ bug class.
 
 - Same starting point: `scripts/daily-sweep.sh`, read only the NEW section.
 - **The band transition is absorbed.** The final save run of this session
-  baselines `botrun:roboticsleadership:6-10` and retires `botrun:…:9`. It was run
+  baselines `botrun:roboticsleadership:le10` and retires `botrun:…:9`. It was run
   from `main` *after* merge, deliberately, so the transient
   `DIRTY/NOTRK DryDock [chore/sweep-2026-08-07]` rows this branch created are not
   baselined — they retire with the branch. (Yesterday's run baselined its own
   branch rows and had to note they would vanish; doing the save last avoids that
   entirely. Recommended for every future run that changes the script.)
 - **Expect exactly one NEW bot-run line tomorrow** (10 → 11 crosses into
-  `11-20`), then silence to 21. If it appears, that is the band working, not a
+  `le20`), then silence to 21. If it appears, that is the band working, not a
   new finding — the task is already filed at p62.
 - Yesterday's watch-item still stands and is still unaddressed: **a class that
   accumulates one member per day never trips the NEW diff.** An empty NEW section
