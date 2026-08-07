@@ -73,6 +73,29 @@ gh_search() { # <subcommand> <jq> -> stdout, nonzero on failure
 
 BOT_RUN_MIN=3   # this many open bot PRs in one repo collapses them to a run
 
+# Map a bot-run count onto a coarse band for the fingerprint. A count-exact
+# fingerprint looked right on 2026-08-06 and was wrong by 2026-08-07: a repo fed
+# by a *daily* scraper grows by exactly one PR per day, so `botrun:repo:8` →
+# `botrun:repo:9` reported as NEW every single morning — for a standing
+# condition that already has a filed backlog task. Banding means the line goes
+# quiet at a steady drip and speaks up only when the pile changes magnitude
+# (9 → 11, or a cleanup dropping it to 4). The rendered line always shows the
+# exact count; only the diff is coarse.
+#
+# Bands are named by their *upper* bound, deliberately. A "3-5" label would
+# hardcode BOT_RUN_MIN's current value from 20 lines away and silently start
+# lying if that threshold ever moved; the band string is an opaque fingerprint
+# key that is never displayed, so it should not imply a lower bound it does not
+# enforce.
+bot_band() {
+  if   [ "$1" -le 5 ];  then echo "le5"
+  elif [ "$1" -le 10 ]; then echo "le10"
+  elif [ "$1" -le 20 ]; then echo "le20"
+  elif [ "$1" -le 50 ]; then echo "le50"
+  else                       echo "gt50"
+  fi
+}
+
 if command -v gh >/dev/null 2>&1; then
   # Bot PRs are tagged inline rather than dropped, so a daily auto-scrape repo
   # can be skimmed past instead of re-triaged, without hiding it entirely.
@@ -89,11 +112,11 @@ if command -v gh >/dev/null 2>&1; then
     done <<< "$prs"
 
     # Collapse each repo's bot PRs into one line once there are BOT_RUN_MIN+ of
-    # them. The fingerprint carries the *count*, so the run reports as NEW only
-    # when the pile actually grows or shrinks — a one-in-one-out day (an old PR
-    # merges, a new one opens) is not a change in the situation and correctly
-    # stays quiet. Below the threshold each PR still gets its own line, so a
-    # lone Dependabot bump is never hidden.
+    # them. The fingerprint carries the count's *band* (see bot_band), so the
+    # run reports as NEW only when the pile changes magnitude — neither a
+    # one-in-one-out day nor the +1/day drip of a daily scraper is a change in
+    # the situation, and both correctly stay quiet. Below the threshold each PR
+    # still gets its own line, so a lone Dependabot bump is never hidden.
     if [ -s "$BOTPRS" ]; then
       while read -r botrepo; do
         [ -n "${botrepo:-}" ] || continue
@@ -108,7 +131,7 @@ if command -v gh >/dev/null 2>&1; then
           if [ "$count" -gt 8 ]; then nums="$nums, +$((count - 8)) more"; fi
           # Deliberately "open", not "none merged" — the script checks open PRs
           # and has not looked at merge history, so it must not claim to have.
-          emit "botrun:$botrepo:$count" \
+          emit "botrun:$botrepo:$(bot_band "$count")" \
                "PR  $botrepo — $count open [bot] PRs ($nums)"
         else
           awk -F'\t' -v r="$botrepo" '$1==r {print $2"\t"$3}' "$BOTPRS" \

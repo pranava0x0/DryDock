@@ -424,3 +424,127 @@ that if you want to skim — `> /tmp/sweep.txt`.
   FULL STATE for days that way. If a future run has an empty NEW section, that
   is a good moment to skim FULL STATE for a group that has quietly grown —
   which is the one legitimate reason to read it.
+
+---
+
+## 2026-08-07 — fourth run
+
+`git pull --ff-only` was already up to date. One `scripts/daily-sweep.sh` call
+did the discovery pass — no subagents, no per-repo `gh` round-trips.
+
+**NEW SINCE LAST RUN — 2 items**, against 27 known fingerprints. Neither is a
+finding, and nothing was filed. The interesting output of this run is what the
+NEW section's own behaviour revealed about the fingerprint scheme.
+
+| New item | Read as |
+|---|---|
+| `roboticsleadership — 9 open [bot] PRs` | Yesterday's collapsed bot-run line, one higher. **Not a finding, and deliberately not re-raised** — the 2026-08-06 run filed it at p62 and left a standing note that raising it twice is nagging through a second channel. It is, however, the trigger for this run's script fix. |
+| `nucleardeployment#9` — "Cache every source locally, validate each claim against it, and record today's criticality" | Opened by the user ~12 h before this run (207 files, +19,165/−12), `MERGEABLE`, no reviews, no CI. **Not a finding** — same read as `nucleardeployment#7` on 2026-08-06: too new to chase, and it is an active session's own output. It is *not* covered by the p55 "4 long-open personal PRs" task either, which is scoped to PRs that have gone stale; a 12-hour-old PR has not. |
+
+### Routine improvement shipped this run — a daily drip defeats a count-exact fingerprint
+
+The bot-run collapse shipped yesterday worked exactly as designed and was still
+wrong, for a reason yesterday's run could not have seen from one day of data.
+
+The fingerprint was `botrun:<repo>:<count>`. That correctly encodes *state* per
+the standing rule, and correctly stays quiet on a one-in-one-out day. But
+`roboticsleadership` is fed by a **daily** scraper, so the count grows by exactly
+one every morning — `…:8` → `…:9` → `…:10` — and a fingerprint that includes the
+exact count is therefore **guaranteed to report NEW every single day, forever**,
+for a standing condition that already has a filed backlog task. Yesterday's log
+predicted the symptom ("if the count is still 8+ … stop re-reporting it") and
+put the fix in the *prompt*, as a rule for me to remember. The standing rule for
+this routine says to put it in the *script*.
+
+The count is now banded before it is fingerprinted:
+
+```
+bot_band: le5 | le10 | le20 | le50 | gt50
+emit "botrun:$botrepo:$(bot_band "$count")"  "PR  $botrepo — $count open [bot] PRs (…)"
+```
+
+The rendered line still shows the **exact** count — only the diff is coarse. So
+the drip goes quiet, and the line speaks up again only when the pile changes
+magnitude (10 → 11, or a cleanup dropping it to 4). Boundaries were checked
+directly against the extracted function at 1/2/3/5/6/8/9/10/11/20/21/50/51/120 —
+all fourteen land in the intended band.
+
+Bands are named by their **upper** bound (`le10`), not as ranges (`6-10`). That
+was a defect caught reviewing my own diff before anything was baselined: a
+`3-5` label hardcodes `BOT_RUN_MIN`'s current value from twenty lines away and
+would start silently lying if that threshold ever moved. The band string is an
+opaque fingerprint key that is never displayed, so it should not imply a lower
+bound it does not enforce.
+
+**This is the second instance of one bug class in two days.** Yesterday: a
+fingerprint containing a date makes every line new every day. Today: a
+fingerprint containing an exact count makes a *daily-incrementing* line new every
+day. Same failure, one level subtler — the value is legitimately state, it just
+has a resolution finer than the thing it is tracking. Generalised rule, now the
+one to apply when adding any future fingerprint: **a fingerprint must be no
+finer-grained than the change you would actually act on.**
+
+### The count moved again mid-run
+
+The 06:11 run saw 9; the 08:45 verification run saw 10 — `#153`, that morning's
+auto-scrape, opened between the two. Worth recording because it is direct
+confirmation of the drip rather than an inference from the log, and because it
+means **10 is already at the top of the `le10` band**: expect one more NEW line
+tomorrow as it crosses into `le20`, and then silence until 21. That single
+crossing is correct behaviour, not a regression — it is the pile changing
+magnitude, which is exactly what the band is for.
+
+### Backlog corrections
+
+The p62 `roboticsleadership` task's description said "As of 2026-08-06 there are
+8 open"; it is now 10, and the stale-data claim moved from ~7 to ~8 days. Updated
+the description in place with the current count, the full PR list, and a note
+that the drip is now absorbed by the banded fingerprint.
+
+**Title left untouched** — the 2026-08-05 addendum's standing rule (DD-020: a
+PATCH to a title orphans `external_id` and mints a phantom duplicate on every
+subsequent sync) still holds, and this is exactly the row that rule was written
+for. Its title still reads "(7 queued)" and still carries the
+`COUNT IN TITLE IS STALE` marker. Verified after the PATCH: sync returned
+`pulledNew: 0, pulledUpdated: 0`, 21 items, no duplicates.
+
+Priority deliberately **not** raised. p62 was set yesterday specifically in
+response to this pile; re-raising it on the same unchanged condition would be the
+nagging the last run warned about.
+
+### Apple Notes sync
+
+`pushedItems: 21, pulledNew: 0, pulledUpdated: 0` — clean, no duplicate-minting.
+
+`mirror.status` read rather than assumed, per the routine: **`disabled`**, reason
+`no tracker repo configured (Settings → Backlog mirror)`. That is the expected
+standing state, not a failure — configuring it is itself an open backlog item
+(p65). Recording it explicitly because "green because it never ran" is the house
+bug class.
+
+### Deliberately not done
+
+- **Did not re-file or re-raise the bot-PR pile.** Filed at p62 yesterday; the
+  user has not seen it at that priority yet.
+- **Did not merge or close any of the 10 bot PRs.** Bot-authored and data-only,
+  but bulk-closing is destructive and the user is not present.
+- **Did not touch `nucleardeployment#9`.** Active work, 12 hours old.
+- **Did not touch the 6 May test rows, the 8 no-upstream checkouts, the dirty
+  trees, or the 5 behind-upstream checkouts.** All unchanged, all already tasks.
+
+### For the next run
+
+- Same starting point: `scripts/daily-sweep.sh`, read only the NEW section.
+- **The band transition is absorbed.** The final save run of this session
+  baselines `botrun:roboticsleadership:le10` and retires `botrun:…:9`. It was run
+  from `main` *after* merge, deliberately, so the transient
+  `DIRTY/NOTRK DryDock [chore/sweep-2026-08-07]` rows this branch created are not
+  baselined — they retire with the branch. (Yesterday's run baselined its own
+  branch rows and had to note they would vanish; doing the save last avoids that
+  entirely. Recommended for every future run that changes the script.)
+- **Expect exactly one NEW bot-run line tomorrow** (10 → 11 crosses into
+  `le20`), then silence to 21. If it appears, that is the band working, not a
+  new finding — the task is already filed at p62.
+- Yesterday's watch-item still stands and is still unaddressed: **a class that
+  accumulates one member per day never trips the NEW diff.** An empty NEW section
+  is the right moment to skim FULL STATE for a group that has quietly grown.
