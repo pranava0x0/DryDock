@@ -578,3 +578,110 @@ Also worth noting for the next run: `GET /api/backlog` returns
 `{items, inboxCount}`, not a bare array. A parse that assumes a list gets
 `items: 2` (the dict's key count) and a `TypeError` one line later, which reads
 like a data problem rather than a shape mismatch.
+
+## 2026-08-08 — fifth run
+
+Quiet day. One NEW line, deliberately skipped; nothing filed.
+
+### What the script reported
+
+```
+--- NEW SINCE LAST RUN ---
+SYNC   Personal CRM [main] 1 ahead / 0 behind upstream
+```
+
+26 fingerprints in FULL STATE, unchanged in substance from yesterday.
+
+### The one NEW item, and why it was skipped
+
+`Personal CRM` is one commit ahead of `origin/main` with a clean working tree.
+The commit is `cb8b1b3` *"Note the real contacts sheet as the target for the
+Google OAuth item"*, authored 2026-08-07 13:04 — a docs line written yesterday
+afternoon and not yet pushed.
+
+Not filed. It is a day old, the tree is clean so nothing is at risk of being
+lost to a stash or a checkout, and pushing someone's unpushed commit is a write
+to a remote that the user has not asked for. Filing a task would also outlive
+its usefulness: the next `git push` in that repo clears it silently, and no task
+row would ever be closed.
+
+Worth flagging about the fingerprint, though: `ahead/behind` counts encode
+state, so this line correctly stays quiet tomorrow at 1-ahead — but it will fire
+again at 2-ahead, and again at 3. An accumulating unpushed stack re-reports once
+per commit. That is the intended behaviour (a growing stack *is* new
+information), just noting it so a run of similar lines next week reads as one
+situation rather than three.
+
+### Apple Notes sync
+
+`POST /api/backlog/sync` → `pushedItems: 21`, `pulledNew: 0`,
+`pulledUpdated: 0`, note `⚓ DryDock Backlog`, `lastSyncedAt: 1786183455`.
+`mirror.status: "disabled"` — `"no tracker repo configured"`, the same standing
+state as the last two runs and still itself a p65 backlog item. Read from the
+response, not assumed.
+
+`GET /api/backlog` afterwards: 21 items, 19 `idea` / 2 `done`, no duplicate
+titles.
+
+### Nothing filed
+
+`GET /api/backlog` first, per the routine. Every FULL STATE group already has a
+row: the bot-PR pile (p62), vibe-coding-security divergence (p88), KeepInTouch
+dirty tree (p70), the May test rows (p68), the mirror (p65), FERC seed files
+(p60), Tarrif Refunds subtree (p58), the 4 open personal PRs (p55), the 5
+behind-upstream checkouts (p52), the 2 stale branches (p50). No new finding
+survived the dedup.
+
+### Acting on yesterday's watch-item: the +1/day class
+
+Yesterday's note said an empty NEW section is the moment to skim FULL STATE for a
+group that has quietly grown, and predicted **exactly one NEW bot-run line
+today** as `roboticsleadership` crossed 10 → 11 into the `le20` band.
+
+It did not appear. Checked directly rather than assuming the band had eaten it:
+
+```
+gh pr list --repo pranava0x0/roboticsleadership --state open
+→ 10 open, #143 #144 #145 #146 #147 #148 #149 #151 #152 #153
+```
+
+Still exactly 10, the identical set as yesterday — no 2026-08-08 PR exists yet.
+The reason is scheduling, and it generalises:
+
+- **The sweep runs at 06:03 EDT = 10:03 UTC.** The scrape workflow opens its PR
+  at ~12:00 UTC (the ten timestamps above cluster at 11:40–13:36 UTC).
+- So **this sweep always observes the target repo's state as of yesterday.** The
+  count it reads is one day stale by construction, and the banded threshold will
+  trip a day later than the underlying reality does.
+
+That is not a defect in either the script or the band — but it does mean a
+prediction of the form "expect the band to flip tomorrow" is off by one whenever
+the watched thing is produced by a scheduled job that runs later in the day than
+this one. The p62 task description remains accurate as written (it is dated
+2026-08-07 and says 10).
+
+### Deliberately not done
+
+- **Did not push the Personal CRM commit.** Reasoning above.
+- **Did not update the p62 bot-PR row.** Its description says "As of 2026-08-07
+  there are 10 open" and lists all ten; that is still exactly true today. Editing
+  it to re-date the same fact is churn, and DD-020 makes title edits actively
+  costly.
+- **Did not merge or close any of the 10 bot PRs**, and did not touch the May
+  test rows, the 8 dirty trees, the 7 no-upstream checkouts, or the 5
+  behind-upstream checkouts. All unchanged, all already tasks, all needing the
+  user.
+
+### For the next run
+
+- Same entry point: `scripts/daily-sweep.sh`, read only NEW.
+- **No script change this run**, so no fingerprint-baselining subtlety to manage
+  — the script saved state during the normal run, from `main`, before this branch
+  existed. The `DIRTY/NOTRK DryDock [chore/sweep-2026-08-08]` rows this branch
+  creates are therefore not baselined and retire with the branch.
+- **Expect the bot-run band line one day later than arithmetic suggests**, for
+  the 10:03-vs-12:00 UTC reason above. When #154 lands the count goes to 11 and
+  crosses into `le20`; this sweep will see it the *following* morning.
+- The two carried watch-items still stand: a class that grows one member per day
+  can hide inside a band, and an empty NEW section is the cheapest moment to skim
+  FULL STATE by hand for exactly that.
