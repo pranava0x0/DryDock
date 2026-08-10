@@ -685,3 +685,139 @@ this one. The p62 task description remains accurate as written (it is dated
 - The two carried watch-items still stand: a class that grows one member per day
   can hide inside a band, and an empty NEW section is the cheapest moment to skim
   FULL STATE by hand for exactly that.
+
+## 2026-08-10 — sixth run
+
+Four NEW lines covering a **two-day** delta — there was no 2026-08-09 run. One
+finding filed (a repo whose local and remote share no common ancestor), one
+script change, two NEW lines deliberately skipped.
+
+### The missed run, and why it matters for reading today's output
+
+The last sweep commit is `3303427` (2026-08-08 06:06 EDT, PR #30), and the next
+sweep PR after it is this run's own — nothing was merged in between, and there is
+no 08-09 entry in this log. So the 08-09 run did not happen. Today's
+NEW section is therefore a 48-hour diff, not the usual 24. That is the whole
+explanation for three of the four lines arriving at once, and it is worth
+stating up front: **an unusually busy NEW section is a signal to check whether
+the previous run actually ran**, not automatically a signal that the world got
+busier.
+
+```
+--- NEW SINCE LAST RUN ---
+PR  roboticsleadership — 12 open [bot] PRs (#155, #154, ..., +4 more)
+PR  FERCforms#18 @pranava0x0 UAT-driven data fix + overflow fixes + CA ERRA parser
+PR  PersonalCRM#1 @pranava0x0 Sheet sync live, cadence/dates/places, a news feed…
+SYNC   Brownfield Opportunities [main] 213 ahead / 203 behind upstream
+```
+
+### Filed: Brownfield Opportunities has an unrelated history to its remote (p90)
+
+`git merge-base main origin/main` exits 1 with no output. The two branches have
+**separate root commits** — local `416d20b`, remote `23278ec`, both titled
+"Initial commit: Brownfield Opportunities dashboard" and both dated 2026-04-27.
+The repo was re-initialised rather than cloned at some point, and the two lines
+have run in parallel since. No fast-forward, no rebase, no merge without
+`--allow-unrelated-histories`; a plain `git pull` refuses.
+
+This is explicitly **not** the same class as p52 ("5 local checkouts are behind
+upstream, all fast-forwardable"). That row's "all fast-forwardable" claim was
+true of the checkouts it was written about and is still true of them — Brownfield
+is a sixth, different thing that the script had been rendering in the same
+visual shape.
+
+One read-only command settled the severity, so it went into the task rather than
+being left for the user:
+
+```
+git diff main origin/main --stat
+→ 56 files changed, 53 insertions(+), 6283 deletions(-)
+```
+
+The divergence is **asymmetric**. Moving from the local tree to the remote tree
+deletes ~6,283 lines and adds ~53; whole test files (`tests/test_published_tree.py`,
+`tests/test_spatial_fuzz.py`) exist only locally. Local HEAD is 2026-08-09,
+remote HEAD 2026-08-05. So this is not a two-way fork needing a merge — the local
+checkout is the live line of work and the remote is a stale parallel one, with
+213 commits of work sitting on this machine and nowhere else.
+
+Left for the user, because every reconciliation is destructive to the 203 remote
+commits. The task flags the 53 remote-only insertions as the thing to rescue
+before that line is abandoned.
+
+### Script change: diverged and no-merge-base get their own labels
+
+The generalisable defect: the script rendered *0 ahead / N behind* (a pull) and
+*213 ahead / 203 behind* (an unresolvable fork) in the identical `SYNC` shape, so
+the worst item in the group looked like the mildest. Severity was visible in the
+numbers but not in the presentation, and the eye reads the label.
+
+Now three labels, chosen from state:
+
+| label | meaning |
+|---|---|
+| `SYNC` | one-directional — fast-forwards |
+| `DIVRG` | ahead *and* behind, merge base exists — needs a real merge |
+| `NOBASE` | ahead *and* behind, **no merge base** — nothing can reconcile it |
+
+Verified with `--no-save`:
+
+```
+NOBASE Brownfield Opportunities [main] 213 ahead / 203 behind upstream
+DIVRG  vibe-coding-security [main] 55 ahead / 98 behind upstream
+SYNC   FERC Document Analysis [main] 0 ahead / 13 behind upstream
+```
+
+It reclassified a second repo unprompted: `vibe-coding-security` (p88) is a true
+divergence, but a recoverable one. Exactly the distinction that was invisible
+before.
+
+**The fingerprint key is deliberately unchanged** (`sync:$repo:$ahead:$behind`) —
+the label is presentation only. The `--no-save` run printed an empty NEW section,
+which confirms zero re-baselining: had the key changed, all five sync rows would
+have resurfaced as false positives tomorrow. The `merge-base` call runs only when
+both counts are non-zero, so it costs one extra git call on ~1–2 repos.
+
+### Skipped, deliberately
+
+- **The two new personal PRs.** `FERCforms#18` and `PersonalCRM#1` were both
+  opened in the small hours of *this morning* (04:11 and 02:15 UTC), are
+  mergeable, and are large active pushes (+2544/−368 and +5390/−258). p55 covers
+  "**long-open**" PRs; a PR six hours old is work in progress, not a stalled
+  item. Filing it would be manufacturing a chore out of the user's live work.
+  Worth watching: if either is still open in a week it belongs in p55.
+- **The bot-PR pile.** Already p62. Yesterday's predicted band flip did occur —
+  the observed count crossed 10 → 12 into `le20`, which is why it surfaced.
+- **p62's stale title** ("7 queued"; the live count is 13). Not edited: DD-020
+  means a title change mints a phantom Apple Notes duplicate every sync, so
+  correcting a number in a title costs an orphaned note. Description-only edits
+  are safe — that is how the Brownfield task was sharpened after filing (PATCH
+  accepts `description` independently of `title`).
+- Nothing deleted anywhere: the 8 dirty trees, 7 no-upstream checkouts, 6 May
+  test rows, and 13 bot PRs all still need the user.
+
+### The 10:03-vs-12:00 UTC lag, re-confirmed
+
+Yesterday's finding held exactly. The sweep ran 06:03 EDT = 10:03 UTC and saw 12
+bot PRs; `#156` was opened at 11:42 UTC, ~100 minutes later. Live count at the
+time of writing is **13**. The rule stands: this sweep always reads the scrape
+repo one day stale, so any "expect the band to flip tomorrow" prediction is off
+by one.
+
+### Sync
+
+`pushedItems` 21 → 22 after filing, `pulledNew` 0, `pulledUpdated` 0 on both
+passes. `mirror.status` read rather than assumed: **`disabled`**, reason "no
+tracker repo configured" — that is p65 outstanding, not a silent failure.
+
+### For the next run
+
+- Same entry point, read only NEW.
+- **Check that yesterday's run happened** before interpreting a busy NEW section
+  — compare the last `## ` heading here against today's date.
+- `NOBASE`/`DIVRG` are live now. `NOBASE` on any repo is a stop-and-file, not a
+  fix-in-passing.
+- The two carried watch-items still stand: a class growing one member per day can
+  hide inside a band, and an empty NEW section is the cheapest moment to skim
+  FULL STATE for exactly that.
+- New watch-item: the two personal PRs above, for the p55 "long-open" threshold.
