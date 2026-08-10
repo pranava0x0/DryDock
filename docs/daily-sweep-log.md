@@ -694,8 +694,9 @@ script change, two NEW lines deliberately skipped.
 
 ### The missed run, and why it matters for reading today's output
 
-The last sweep commit is `3303427` (2026-08-08 06:06 EDT, PR #30); there is no
-08-09 entry in this log and no PR #31. So the 08-09 run did not happen. Today's
+The last sweep commit is `3303427` (2026-08-08 06:06 EDT, PR #30), and the next
+sweep PR after it is this run's own — nothing was merged in between, and there is
+no 08-09 entry in this log. So the 08-09 run did not happen. Today's
 NEW section is therefore a 48-hour diff, not the usual 24. That is the whole
 explanation for three of the four lines arriving at once, and it is worth
 stating up front: **an unusually busy NEW section is a signal to check whether
