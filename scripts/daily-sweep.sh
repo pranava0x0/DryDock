@@ -178,8 +178,21 @@ for dir in "$PROJECTS_ROOT"/*/; do
   if [ "$dirty" != "0" ]; then
     emit "dirty:$repo:$dirty" "DIRTY  $repo [$branch] $dirty uncommitted"
   fi
+  # A checkout that is only behind fast-forwards; one that is both ahead and
+  # behind has diverged and needs a real decision. Worst case the two sides
+  # share no merge base at all, which no pull/rebase can reconcile — call that
+  # out by name rather than letting it read as an ordinary lag. The fingerprint
+  # key stays "sync:repo:ahead:behind" so adding this label re-baselines nothing.
   if [ "${ahead:-0}" != "0" ] || [ "${behind:-0}" != "0" ]; then
-    emit "sync:$repo:$ahead:$behind" "SYNC   $repo [$branch] ${ahead} ahead / ${behind} behind upstream"
+    label="SYNC  "
+    if [ "${ahead:-0}" != "0" ] && [ "${behind:-0}" != "0" ]; then
+      if git -C "$dir" merge-base HEAD '@{u}' >/dev/null 2>&1; then
+        label="DIVRG "
+      else
+        label="NOBASE"
+      fi
+    fi
+    emit "sync:$repo:$ahead:$behind" "$label $repo [$branch] ${ahead} ahead / ${behind} behind upstream"
   fi
   if [ "$tracked" = "0" ]; then
     emit "notrack:$repo" "NOTRK  $repo [$branch] no upstream configured"
