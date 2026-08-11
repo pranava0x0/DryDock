@@ -954,3 +954,24 @@ worth either configuring or closing p65 as won't-do.
 - Carried watch-items: `dirty:` banding if it starts drifting; the three
   personal PRs against p55's threshold; a second never-merging bot repo; and
   p65 having read `disabled` three runs running.
+
+### Addendum — migration verified after the fact
+
+The section above was written *before* the saving run, and describes it in the
+past tense. That is the same order-of-operations this log called out in `#29`
+(a verification claim written before it was run), so here is the observed
+result rather than the predicted one.
+
+Saving run at 08:10 emitted the four sync rows — that is the migration being
+spent, as intended — and an immediate `--no-save` re-run came back with **no
+sync lines at all**. The re-key saved and settled. `Brownfield` also dropped out
+of NEW on the saving run: `gt100/gt100` was already stable, which is the banding
+doing exactly the job it was added for.
+
+One live correction to the entry above: `FirstPassRx` was reported as "2
+uncommitted". Across the three runs it went **2 → 6 → 21 uncommitted**, then
+picked up `3 ahead / 0 behind`. The other session was committing while this
+sweep read the tree. The concurrency point stands harder than written — the
+count in a DIRTY row is a sample, not a measurement, when the tree is live.
+It baselined at 6, so it will legitimately re-surface tomorrow at whatever
+count it settles on; that is correct behaviour, not a repeat of the drip.
