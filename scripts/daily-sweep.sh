@@ -96,6 +96,25 @@ bot_band() {
   fi
 }
 
+# The same drip that broke the bot-run fingerprint on 2026-08-07 broke the
+# ahead/behind fingerprint on 2026-08-11: three of that morning's five NEW lines
+# were already-filed conditions that had moved by exactly one commit overnight
+# (Brownfield 213→214 ahead, FERC Document Analysis 13→14 behind). A repo with a
+# live upstream drifts every day, so a count-exact key re-reports it every day,
+# forever — which is precisely the noise the NEW section exists to suppress.
+#
+# Zero gets its own band on purpose: "0 ahead" vs "any ahead" is the SYNC/DIVRG
+# boundary, so collapsing 0 into a le5 bucket would hide a checkout the moment it
+# stopped being fast-forwardable.
+count_band() {
+  if   [ "$1" -eq 0 ];   then echo "0"
+  elif [ "$1" -le 5 ];   then echo "le5"
+  elif [ "$1" -le 20 ];  then echo "le20"
+  elif [ "$1" -le 100 ]; then echo "le100"
+  else                        echo "gt100"
+  fi
+}
+
 if command -v gh >/dev/null 2>&1; then
   # Bot PRs are tagged inline rather than dropped, so a daily auto-scrape repo
   # can be skimmed past instead of re-triaged, without hiding it entirely.
@@ -181,18 +200,24 @@ for dir in "$PROJECTS_ROOT"/*/; do
   # A checkout that is only behind fast-forwards; one that is both ahead and
   # behind has diverged and needs a real decision. Worst case the two sides
   # share no merge base at all, which no pull/rebase can reconcile — call that
-  # out by name rather than letting it read as an ordinary lag. The fingerprint
-  # key stays "sync:repo:ahead:behind" so adding this label re-baselines nothing.
+  # out by name rather than letting it read as an ordinary lag.
+  #
+  # The class is part of the fingerprint, not just the rendering: an upstream
+  # history rewrite can destroy the merge base while both counts stay inside
+  # their bands, turning a recoverable DIVRG into an unrecoverable NOBASE with
+  # nothing in the numbers to show for it. That flip has to speak up.
   if [ "${ahead:-0}" != "0" ] || [ "${behind:-0}" != "0" ]; then
-    label="SYNC  "
+    class="SYNC"
     if [ "${ahead:-0}" != "0" ] && [ "${behind:-0}" != "0" ]; then
       if git -C "$dir" merge-base HEAD '@{u}' >/dev/null 2>&1; then
-        label="DIVRG "
+        class="DIVRG"
       else
-        label="NOBASE"
+        class="NOBASE"
       fi
     fi
-    emit "sync:$repo:$ahead:$behind" "$label $repo [$branch] ${ahead} ahead / ${behind} behind upstream"
+    printf -v label '%-6s' "$class"
+    emit "sync:$repo:$class:$(count_band "${ahead:-0}"):$(count_band "${behind:-0}")" \
+         "$label $repo [$branch] ${ahead} ahead / ${behind} behind upstream"
   fi
   if [ "$tracked" = "0" ]; then
     emit "notrack:$repo" "NOTRK  $repo [$branch] no upstream configured"
