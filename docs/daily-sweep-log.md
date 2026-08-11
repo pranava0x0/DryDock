@@ -821,3 +821,136 @@ tracker repo configured" — that is p65 outstanding, not a silent failure.
   hide inside a band, and an empty NEW section is the cheapest moment to skim
   FULL STATE for exactly that.
 - New watch-item: the two personal PRs above, for the p55 "long-open" threshold.
+
+## 2026-08-11 — seventh run
+
+Yesterday's run happened (`1f2fb7a`, PR #31), so this is a true 24-hour diff.
+Five NEW lines, **one** of which was a real finding. One task filed, one script
+change, and a live-edit collision caught mid-run.
+
+### The one finding: DryDock's first new Dependabot batch since #9–#13
+
+Three PRs opened 2026-08-10 16:57 UTC, filed as one task at p72:
+
+| PR | group | contents |
+|---|---|---|
+| #32 | production-dependencies | `next` 15.5.22 → 15.5.23 |
+| #33 | dev-dependencies | `eslint-config-next` 15.5.22 → 15.5.23, `postcss` |
+| #34 | major-upgrades | `eslint` 8.57.1 → **10.8.0**, `tailwindcss`, `typescript` |
+
+Two things worth recording beyond "three PRs are open".
+
+**The 08-05 pin leak did not recur.** `eslint-config-next` moved to 15.5.23 in
+the same batch that moved `next` to 15.5.23 — the lockstep pair that broke last
+time (a majors group swept the config to 16.x against a 15.x `next`) held. The
+grouping fix is confirmed working against a live batch, not just in config.
+
+**#34 bumps a gate that does not exist.** Re-verified today: `eslint` is
+`^8.57.1`, the script is `next lint`, and the repo still has no ESLint config
+file of any kind — so `npm run lint` has never been runnable here. eslint 8 → 10
+is therefore a major-version review of a dep that does nothing. That reframes the
+PR: the real decision is *configure ESLint or drop the dep*, and only the
+`tailwindcss` and `typescript` majors need an actual diff. Filed that way rather
+than as "review 3 majors", because the eslint third of the work is the wrong
+work. (The 2026-08-05 lesson — "a quality gate that cannot run still reads as
+configured" — is now three months old in this repo and still unaddressed; a
+dependency bump arriving on top of it is how that stays invisible.)
+
+Not merged: majors are never merged unattended, and the advisory cross-check
+against `vibe-coding-security` is a prerequisite the task carries.
+
+### Script change: band the ahead/behind fingerprint
+
+Three of the five NEW lines were not findings. They were already-filed conditions
+that had moved by exactly one commit overnight:
+
+```
+NOBASE Brownfield Opportunities  213 → 214 ahead / 203 behind   (filed p90)
+SYNC   FERC Document Analysis      0 ahead / 13 → 14 behind     (covered p52)
+```
+
+This is the *same defect* the `bot_band` comment already describes, one field
+over: a repo with a live upstream drifts daily, so a count-exact key re-reports
+it daily, forever. Yesterday's run explicitly chose to leave
+`sync:$repo:$ahead:$behind` alone to avoid a re-baseline — correct on the day the
+labels landed, but it left the drip running. Banded now, same technique:
+
+```
+count_band:  0 | le5 | le20 | le100 | gt100
+key:         sync:$repo:$class:$(count_band ahead):$(count_band behind)
+```
+
+Two deliberate choices:
+
+- **Zero is its own band.** `0 ahead` vs `any ahead` *is* the SYNC/DIVRG
+  boundary; folding 0 into a `le5` bucket would hide the moment a checkout
+  stopped being fast-forwardable.
+- **The class is in the key**, unlike yesterday. An upstream history rewrite can
+  destroy the merge base while both counts stay inside their bands — a
+  recoverable DIVRG silently becoming an unrecoverable NOBASE, with nothing in
+  the numbers to show for it. That flip must speak up.
+
+Verified with `--no-save`: rendering byte-identical (the label is now built with
+`printf -v '%-6s'` from an unpadded class, so the columns still line up), and all
+four sync rows correctly re-key. **This costs a one-time re-baseline** — every
+sync fingerprint changes shape — so the final run of this session was a real
+(saving) one, spending that migration *today under review* instead of leaving it
+to fire as four false NEW lines tomorrow morning.
+
+`dirty:$repo:$count` has the identical shape and is the obvious next candidate,
+but it has been stable across all seven runs — no repo has drifted a file a day.
+Left alone until it actually misfires; banding a key that isn't drifting only
+raises the threshold at which real news arrives.
+
+### The sweep caught a live edit in progress
+
+`FirstPassRx` appeared as `DIRTY [main] 2 uncommitted` in the 08:08 verification
+run having been *absent* from the 08:05 run. `src/lib/cash.ts` and
+`src/lib/cash.test.ts` were modified at 08:07:16 and 08:07:25 — between the two
+runs. Another session is working in that repo right now.
+
+Not filed. A dirty tree three minutes old is somebody typing, not a stalled
+checkout — the same judgment p55 applies to hours-old PRs. It is the DIRTY-row
+analogue of the 2026-08-05 lesson about a parallel session claiming an ID
+mid-triage: **this sweep runs concurrently with other work, so any state it reads
+can be a half-finished edit.** Cheap rule, worth keeping: before filing a dirty
+tree, `stat` the modified files — minutes-old mtimes mean live work.
+
+(The run's own `DIRTY DryDock 1 uncommitted` was this script edit. Self-noise;
+gone once committed, which is why the saving run comes after the merge.)
+
+### Skipped, deliberately
+
+- **`nucleardeployment#11`** (@pranava0x0, +35635/−51, MERGEABLE) — opened
+  04:26 UTC, ~4 hours before the sweep. p55 covers *long-open* PRs; this is a
+  large active push. Same call as `FERCforms#18` / `PersonalCRM#1` yesterday —
+  both of which, note, are still open and now ~30 hours old. If all three are
+  still open in a week they belong in p55 together.
+- **`datacenterwaterusage#22`** (bot, python group, 2026-08-10 21:45 UTC) — a
+  single bot deps PR ~10 hours old is the normal Dependabot lifecycle, not a
+  pile. p62 covers the one repo where bot PRs genuinely never merge
+  (roboticsleadership, now **15** open, up from 13). Watch for a second
+  never-merging scrape repo forming.
+- **Brownfield / FERC / vibe-coding-security sync rows** — all already filed
+  (p90, p52, p88). This is what the banding above stops re-reporting.
+- Nothing deleted: 8 dirty trees, 7 no-upstream checkouts, 6 May test rows,
+  18 bot PRs across two repos all still need the user.
+
+### Sync
+
+`pushedItems` 22 → **23** after filing, `pulledNew` 0, `pulledUpdated` 0 on both
+passes. `mirror.status` read, not assumed: **`disabled`** — "no tracker repo
+configured". Third run reporting this; it is p65 outstanding, not a silent
+failure, but a status that has read `disabled` for three consecutive runs is
+worth either configuring or closing p65 as won't-do.
+
+### For the next run
+
+- Same entry point, read only NEW. Sync rows are banded now — a sync line that
+  *does* appear has crossed a magnitude or changed class, so treat it as real.
+- The one-time sync re-baseline was spent today. If four sync rows show up
+  tomorrow anyway, the migration did not save and that is the bug to chase.
+- `stat` the files before filing any DIRTY row.
+- Carried watch-items: `dirty:` banding if it starts drifting; the three
+  personal PRs against p55's threshold; a second never-merging bot repo; and
+  p65 having read `disabled` three runs running.
