@@ -86,15 +86,28 @@ esac
 #    than reporting every squash-merged branch as outstanding.
 if printf '' | g patch-id --verbatim >/dev/null 2>&1; then
   pid () { g patch-id --verbatim 2>/dev/null | awk '{print $1}'; }
+  pid_lines () { g patch-id --verbatim 2>/dev/null; }
   target=$(g diff "$mb" "$branch" 2>/dev/null | pid)
   # One `git log -p` piped into one patch-id, rather than two processes per
-  # commit. Bounded: a branch forked thousands of commits back is not worth
-  # a full-history scan, and the merged-tree test below still applies.
-  if [ -n "$target" ] &&
-     g log -p --no-merges -n "${SWEEP_PATCH_ID_SCAN:-500}" "$mb..$base" 2>/dev/null |
-       g patch-id --verbatim 2>/dev/null | grep -q "^$target "; then
-    echo "stale $ahead"
-    exit 0
+  # commit.
+  #
+  # Deliberately unbounded by default. An earlier cut capped this at 500
+  # commits for speed, which made the whole fix *decay*: past the cap the
+  # squash commit falls out of the scan, and if base has since touched the
+  # branch's paths the merged-tree test can't see the incorporation either, so
+  # a long-shipped branch silently reappears as outstanding work. That is this
+  # PR's own bug on a timer. SWEEP_PATCH_ID_SCAN exists for a pathological
+  # repo, but a bound has to be opted into, never defaulted.
+  if [ -n "$target" ]; then
+    if [ -n "${SWEEP_PATCH_ID_SCAN:-}" ]; then
+      hist=$(g log -p --no-merges -n "$SWEEP_PATCH_ID_SCAN" "$mb..$base" 2>/dev/null | pid_lines)
+    else
+      hist=$(g log -p --no-merges "$mb..$base" 2>/dev/null | pid_lines)
+    fi
+    case "$hist" in
+      "$target "*|*"
+$target "*) echo "stale $ahead"; exit 0 ;;
+    esac
   fi
 else
   sq=$(g commit-tree "$branch^{tree}" -p "$mb" -m squash-probe 2>/dev/null || true)

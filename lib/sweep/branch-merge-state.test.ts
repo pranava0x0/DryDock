@@ -73,8 +73,11 @@ function squashMerge(repo: string, branch: string, msg: string) {
   git(repo, "commit", "-q", "-m", msg);
 }
 
-function state(repo: string, branch: string): string {
-  return execFileSync(SCRIPT, [repo, branch], { encoding: "utf8" }).trim();
+function state(repo: string, branch: string, env: Record<string, string> = {}): string {
+  return execFileSync(SCRIPT, [repo, branch], {
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  }).trim();
 }
 
 describe("branch-merge-state.sh", () => {
@@ -261,6 +264,63 @@ describe("branch-merge-state.sh", () => {
     expect(tree).not.toBe(git(repo, "rev-parse", "feat^{tree}"));
     rmSync(join(repo, ".git", "objects", tree.slice(0, 2), tree.slice(2)), { force: true });
     expect(state(repo, "feat")).toBe("unreadable");
+  });
+
+  /**
+   * The history scan must not be capped by default. An earlier cut bounded it
+   * at 500 commits, which made the whole fix decay: past the cap the squash
+   * commit falls out of the scan, and once main has also touched the branch's
+   * paths the merged-tree test can't see the incorporation either — so a
+   * long-shipped branch silently reappears as outstanding work. This PR's own
+   * bug, on a timer.
+   *
+   * Asserted with a deliberately tiny cap rather than 500 real commits: the
+   * capped run must miss it and the default run must find it.
+   */
+  it("finds the squash however far back it is, unless a scan bound is opted into", () => {
+    const repo = newRepo();
+    git(repo, "checkout", "-q", "-b", "feat");
+    commit(repo, "x.txt", "branch version\n", "branch edits x");
+    squashMerge(repo, "feat", "squash of feat (#1)");
+    commit(repo, "x.txt", "revised on main\n", "main revises x, blinding merged-tree");
+    for (let i = 0; i < 4; i++) commit(repo, "pad.txt", `${i}\n`, `pad ${i}`);
+
+    expect(state(repo, "feat", { SWEEP_PATCH_ID_SCAN: "2" })).toBe("unmerged 1");
+    expect(state(repo, "feat")).toBe("stale 1");
+  });
+
+  /**
+   * The test above documents the knob but cannot catch the regression it was
+   * written for: with a handful of commits, a 500-commit default cap never
+   * bites, so the capped version passes it too. Catching "there is a default
+   * cap" needs a history deeper than that cap — there is no cheaper way to
+   * express it.
+   *
+   * Hence the one deliberately slow fixture in this file (~7s): 520 commits
+   * built as a `commit-tree` chain inside a single shell, rather than 520
+   * child processes from here.
+   */
+  it("finds a squash buried under 500+ later commits", () => {
+    const repo = newRepo();
+    git(repo, "checkout", "-q", "-b", "feat");
+    commit(repo, "x.txt", "branch version\n", "branch edits x");
+    squashMerge(repo, "feat", "squash of feat (#1)");
+    // Blinds the merged-tree test, so only the history scan can see the squash.
+    commit(repo, "x.txt", "revised on main\n", "main revises x");
+    execFileSync(
+      "bash",
+      [
+        "-c",
+        'set -e; cd "$1"; p=$(git rev-parse HEAD); t=$(git rev-parse HEAD^{tree}); ' +
+          'for i in $(seq 1 520); do p=$(git commit-tree "$t" -p "$p" -m "pad $i"); done; ' +
+          'git update-ref refs/heads/main "$p"',
+        "_",
+        repo,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(Number(git(repo, "rev-list", "--count", "main"))).toBeGreaterThan(500);
+    expect(state(repo, "feat")).toBe("stale 1");
   });
 
   it("reports unmerged when the branch would conflict with main", () => {

@@ -1040,7 +1040,7 @@ should be `stale` is a nuisance line in a sweep; `stale` that should be
 again. `git patch-id --verbatim` (git 2.39+, probed, `git cherry` as fallback)
 fixes it.
 
-It took **seven** wrong versions to get there, and all of them are worth
+It took **eight** wrong versions to get there, and all of them are worth
 recording, because they failed the same way: each was checked only against the
 history that happened to be on this disk that morning.
 
@@ -1115,6 +1115,20 @@ status 1 is now distinguished from everything above it, which propagates as
 `unreadable`. Both refs and the commit count resolve in that case, so the
 up-front ref checks don't catch it.
 
+**Wrong version 8, and the most instructive of the set:** the history scan
+above was capped at 500 commits, for speed. That cap made the entire fix
+**decay**. Past 500 commits the squash falls out of the scan, and if main has
+by then touched the branch's paths the merged-tree test is blind too — so a
+long-shipped branch silently returns to being reported as outstanding work.
+This PR's own bug, on a timer, introduced by the PR fixing it. Measured before
+removing it: 505 commits scan in **268ms**, so the cap was buying nothing.
+
+The test for it is the one deliberately slow fixture in the file (~8s, 520
+commits built as a `commit-tree` chain in a single shell). That cost is the
+point: a cheap version using a handful of commits **passed against the capped
+code**, because a 500-commit cap never bites at six commits. A regression test
+that cannot reach the regression is decoration.
+
 ### The quieter bug underneath all of it
 
 Separately, Codex flagged that `rev-list --count "$base..$branch" || echo 0`
@@ -1159,6 +1173,7 @@ builds each git topology from scratch in a temp dir — 8 cases, ~2s:
 | **whitespace-equivalent patch on main** | `unmerged 1` |
 | **missing tree object** (branch side) | `unreadable` |
 | **missing tree object** (main side) | `unreadable` |
+| **squash buried under 500+ later commits** | `stale 1` |
 | branch conflicts with main | `unmerged 1` |
 | no common ancestor | `unmerged` |
 | unreadable branch / unreadable base | `unreadable` |
@@ -1174,11 +1189,12 @@ broken version was restored and re-run:
 | v5, merged-tree only | ✗ both *"main revised/deleted that file afterwards"* |
 | v6, `git cherry` | ✗ *"whitespace-equivalent patch"*, ✗ *"missing tree object"* |
 | v7, branch-side tree guard only | ✗ *"main's tree object is missing"* |
-| shipped | ✓ 16 pass |
+| v8, 500-commit scan cap | ✗ *"squash buried under 500+ later commits"* |
+| shipped | ✓ 18 pass |
 
 Each wrong version fails exactly the cases written for it — which is the only
 reason to believe the shipped one is better rather than merely newer. Full
-suite **741 passed / 59 files**.
+suite **743 passed / 59 files**.
 
 The branch still appears in FULL STATE — a stale ref is real, and per the
 standing rule nothing gets deleted without the user — but it now says what it
