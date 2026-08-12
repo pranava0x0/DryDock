@@ -1012,24 +1012,18 @@ Compare trees, not commit counts, and report the two states differently
 ([scripts/daily-sweep.sh](../scripts/daily-sweep.sh)):
 
 ```sh
-mb=$(git … merge-base main "$b" 2>/dev/null || true)
-sq=""
-[ -n "$mb" ] && sq=$(git … commit-tree "$b^{tree}" -p "$mb" -m squash-probe 2>/dev/null || true)
-if [ -n "$sq" ] && git … cherry main "$sq" 2>/dev/null | grep -q '^-'; then
-  emit "branch:$b:merged" "BRANCH DryDock/$b — squash-merged into main, local ref stale"
-  continue
-fi
+merged=$(git … merge-tree --write-tree main "$b")
+[ "$merged" = "$(git … rev-parse main^{tree})" ] && stale
 ```
 
-Replay the branch as a single commit on its merge base — the same shape a
-squash merge produces — and let `git cherry` look for that patch-id anywhere in
-main's history. `git cherry` on the branch directly does **not** work: a squash
-collapses N commits into one, so none of the ten original patch-ids appear in
-main.
+Ask the question the sweep actually means — *would merging this branch change
+main?* — by merging in memory and comparing the resulting tree to main's. Two
+routes to the same content produce the same tree oid, so this is immune to
+everything the earlier attempts tripped over.
 
-It took **three** wrong versions to get there, and all three are worth
-recording, because they failed the same way: each was checked only against the
-history that happened to be on this disk that morning.
+It took **four** wrong versions to get there, and all four are worth recording,
+because they failed the same way: each was checked only against the history
+that happened to be on this disk that morning.
 
 **Wrong version 1, caught by self-review:** `[ -z "$(git diff --stat main "$b")" ]`.
 A *failed* `git diff` produces empty stdout, empty read as "no differences",
@@ -1048,9 +1042,48 @@ that broke it.
 squash-merged branch later merges main back in, the merge base moves onto the
 squash commit, so the synthesized probe is an *empty* commit — which `git
 cherry` correctly reports as `+`, no equivalent upstream. Nothing left to
-merge, reported as three commits of work. Reproduced from scratch before
-believing it. Hence the merge-base emptiness test running **first**, with the
-patch-id replay as the second gate.
+merge, reported as three commits of work. Fixed by testing merge-base emptiness
+first.
+
+**Wrong version 4, Codex again:** patch-ids at all. If main edits the same
+region *before* the squash, the squash commit's diff is against already-modified
+main while the probe's is against the old fork point — differing context lines,
+differing patch-id, shipped work reported as outstanding.
+
+That one is worth dwelling on, because the first attempt to reproduce it
+**failed and nearly closed the finding as unfounded**. Edits six lines apart in
+the same file returned `stale`, correctly, because the hunks don't share
+context. Only when they were moved to within three lines of each other did it
+break:
+
+```
+merged main: a b c MAIN e BRANCH      <- both edits present, plainly shipped
+helper says: unmerged 1               <- false positive
+```
+
+"I couldn't reproduce it" was one fixture away from being wrong. The reviewer
+said *same file*; the actual precondition is *within each other's diff context*,
+which is a narrower thing that the first fixture missed.
+
+This is what finally moved the check off patch-ids. `git merge-tree
+--write-tree` compares content, not patches, so main editing anything first is
+irrelevant. `--write-tree` needs git 2.38+, so it's capability-probed (the old
+three-argument `merge-tree` would silently misread these arguments) with the
+patch-id path kept as a fallback.
+
+### The quieter bug underneath all of it
+
+Separately, Codex flagged that `rev-list --count "$base..$branch" || echo 0`
+turned a *failed* read into the same value as a genuinely empty range — so an
+unreadable ref printed `in-sync` and the sweep skipped the branch entirely.
+
+That is the same shape as the very first wrong version (empty stdout reading as
+"no differences"), reintroduced two commits later in a different disguise, in a
+file whose own comments warn about it. It also survived the first round of
+tests, because the test asserted only that the output didn't contain `stale` —
+and `in-sync` doesn't. **An assertion written as a negation passes for the
+wrong reason.** There is now an explicit `unreadable` state, asserted by
+equality, and the sweep reports it rather than silently skipping.
 
 ### The test, which is the actual fix
 
@@ -1075,21 +1108,24 @@ builds each git topology from scratch in a temp dir — 8 cases, ~2s:
 | squash-merged | `stale 2` |
 | squash-merged, **main advanced twice** | `stale 1` |
 | squash-merged, **branch merged main back** | `stale 2` |
+| squash-merged, **main edited the same region first** | `stale 1` |
 | work added *after* the squash | `unmerged 2` |
+| branch conflicts with main | `unmerged 1` |
 | no common ancestor | `unmerged` |
-| unreadable ref | never `stale` |
+| unreadable branch / unreadable base | `unreadable` |
 
 Then the part that makes them regression tests rather than decoration — each
 broken version was restored and re-run:
 
 | version under test | result |
 |---|---|
-| v2, tip comparison | ✗ fails *"stays stale after main advances"*, 7 pass |
-| v3, patch-id only | ✗ fails *"stays stale when the branch merged main back"*, 7 pass |
-| shipped | ✓ 8 pass |
+| v2, tip comparison | ✗ *"stays stale after main advances"* |
+| v3, patch-id only | ✗ *"stays stale when the branch merged main back"* |
+| v4, + merge-base guard | ✗ *"same region edited first"*, ✗ both `unreadable` cases |
+| shipped | ✓ 11 pass |
 
-Each wrong version fails exactly the case that was written for it. Full suite
-**733 passed / 59 files**.
+Each wrong version fails exactly the cases written for it. Full suite
+**733 passed / 59 files** before the two additions.
 
 The branch still appears in FULL STATE — a stale ref is real, and per the
 standing rule nothing gets deleted without the user — but it now says what it
@@ -1164,6 +1200,14 @@ reaches for the launch config.
   most recent one — a condition that expires on the next commit, which was this
   PR. Build the topology, don't sample the one on disk.
 - **"It's only a shell script" is not an exemption from the test rule.** The
-  cost of the fixture harness was about fifteen minutes; it caught two of the
-  three wrong versions on replay and would have caught them the first time.
-  The rule in AGENTS.md says *every* bug fix, and this run had to be told.
+  cost of the fixture harness was about fifteen minutes; on replay it caught
+  every wrong version, and would have caught them the first time. The rule in
+  AGENTS.md says *every* bug fix, and this run had to be told, by a bot.
+- **A negative assertion passes for the wrong reason.** `not.toContain("stale")`
+  was satisfied by the bug it was meant to catch. Assert the state you want by
+  equality; "didn't do the bad thing" is not "did the right thing".
+- **Failing to reproduce a reviewer's finding is not evidence against it.** The
+  same-region case came back clean on the first fixture and was one edit away
+  from being dismissed. When a repro fails, suspect the repro until the
+  precondition is understood precisely — "same file" turned out to mean
+  "within three lines".

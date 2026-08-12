@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -14,11 +14,11 @@ import { join, resolve } from "node:path";
  * report exactly that, manufacturing a false "10 commits not in main" finding
  * roughly once per run.
  *
- * Two attempted fixes shipped and were caught in review on the same day (see
- * docs/daily-sweep-log.md, 2026-08-12), both because they were only ever
- * exercised against the one history that happened to be on disk. Every case
- * below is a *topology*, built from scratch, so the next attempt has to survive
- * all of them rather than today's repo.
+ * Four attempted fixes were caught in review on the same day (see
+ * docs/daily-sweep-log.md, 2026-08-12), every one of them because it was only
+ * ever exercised against the history that happened to be on disk. Each case
+ * below is therefore a *topology*, built from scratch, so the next attempt has
+ * to survive all of them rather than today's repo.
  */
 
 const SCRIPT = resolve(__dirname, "../../scripts/branch-merge-state.sh");
@@ -166,13 +166,53 @@ describe("branch-merge-state.sh", () => {
   });
 
   /**
+   * The patch-id replay was wrong whenever main edited the same region before
+   * the squash: the squash commit's diff is against already-modified main,
+   * the probe's is against the old fork point, and differing context lines
+   * mean differing patch-ids. Note the two edits have to fall within each
+   * other's diff context to trigger it — an earlier attempt at this fixture
+   * put them six lines apart and passed against the broken code.
+   */
+  it("stays stale when main edited the same region of the file before the squash", () => {
+    const repo = newRepo();
+    writeFileSync(join(repo, "shared.txt"), "a\nb\nc\nd\ne\nf\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "shared file");
+    git(repo, "checkout", "-q", "-b", "feat");
+    commit(repo, "shared.txt", "a\nb\nc\nd\ne\nBRANCH\n", "branch edits line 6");
+    git(repo, "checkout", "-q", "main");
+    commit(repo, "shared.txt", "a\nb\nc\nMAIN\ne\nf\n", "main edits line 4 first");
+    squashMerge(repo, "feat", "squash of feat (#1)");
+    expect(state(repo, "feat")).toBe("stale 1");
+  });
+
+  it("reports unmerged when the branch would conflict with main", () => {
+    const repo = newRepo();
+    git(repo, "checkout", "-q", "-b", "feat");
+    commit(repo, "base.txt", "branch version\n", "branch rewrites base");
+    git(repo, "checkout", "-q", "main");
+    commit(repo, "base.txt", "main version\n", "main rewrites base");
+    expect(state(repo, "feat")).toBe("unmerged 1");
+  });
+
+  /**
    * The very first attempt tested `[ -z "$(git diff --stat …)" ]`, where a
    * *failed* git call produces empty stdout and reads as "no differences" —
-   * the unhappy path rendering identically to the happy one. A branch that
-   * cannot be compared must report its work, never silently pass as shipped.
+   * the unhappy path rendering identically to the happy one. A ref that cannot
+   * be read must say so: reporting it as `in-sync` made the sweep skip the
+   * branch entirely, which is the same failure wearing a different label.
    */
-  it("does not report an unreadable branch as stale", () => {
+  it("reports an unreadable branch as unreadable, not in-sync or stale", () => {
     const repo = newRepo();
-    expect(state(repo, "no-such-branch")).not.toContain("stale");
+    expect(state(repo, "no-such-branch")).toBe("unreadable");
+  });
+
+  it("reports an unreadable base as unreadable", () => {
+    const repo = newRepo();
+    git(repo, "checkout", "-q", "-b", "feat");
+    commit(repo, "a.txt", "work\n", "w1");
+    expect(
+      execFileSync(SCRIPT, [repo, "feat", "no-such-base"], { encoding: "utf8" }).trim(),
+    ).toBe("unreadable");
   });
 });

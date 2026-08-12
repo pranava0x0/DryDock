@@ -239,6 +239,12 @@ if [ -d "$PROJECTS_ROOT/DryDock/.git" ]; then
     # against fixture git histories (lib/sweep/branch-merge-state.test.ts).
     read -r state n <<<"$("$SWEEP_DIR/branch-merge-state.sh" "$PROJECTS_ROOT/DryDock" "$b")"
     [ "$state" = "in-sync" ] && continue
+    if [ "$state" = "unreadable" ]; then
+      # Report it rather than skipping: a ref we cannot classify is not a ref
+      # with nothing in it.
+      emit "branch:$b:unreadable" "BRANCH DryDock/$b — could not be read (git error)"
+      continue
+    fi
     if [ "$state" = "stale" ]; then
       emit "branch:$b:merged" "BRANCH DryDock/$b — squash-merged into main, local ref stale"
       continue
