@@ -186,6 +186,32 @@ describe("branch-merge-state.sh", () => {
     expect(state(repo, "feat")).toBe("stale 1");
   });
 
+  /**
+   * The merge-tree test alone is blind here: once main revises a path the
+   * branch touched, merging the stale branch back in changes the tree (or
+   * conflicts), so a fully-shipped branch reads as outstanding work. Ordinary
+   * history — it happens the first time anyone edits that file again. The
+   * historical patch-id replay is what covers it.
+   */
+  it("stays stale when main revised the branch's file after the squash", () => {
+    const repo = newRepo();
+    git(repo, "checkout", "-q", "-b", "feat");
+    commit(repo, "x.txt", "branch version\n", "branch edits x");
+    squashMerge(repo, "feat", "squash of feat (#1)");
+    commit(repo, "x.txt", "revised on main afterwards\n", "main revises x");
+    expect(state(repo, "feat")).toBe("stale 1");
+  });
+
+  it("stays stale when main deleted the branch's file after the squash", () => {
+    const repo = newRepo();
+    git(repo, "checkout", "-q", "-b", "feat");
+    commit(repo, "x.txt", "branch version\n", "branch adds x");
+    squashMerge(repo, "feat", "squash of feat (#1)");
+    git(repo, "rm", "-q", "x.txt");
+    git(repo, "commit", "-q", "-m", "main deletes x after the squash");
+    expect(state(repo, "feat")).toBe("stale 1");
+  });
+
   it("reports unmerged when the branch would conflict with main", () => {
     const repo = newRepo();
     git(repo, "checkout", "-q", "-b", "feat");

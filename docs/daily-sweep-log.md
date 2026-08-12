@@ -1011,19 +1011,30 @@ manufacture a fake finding roughly once per run.
 Compare trees, not commit counts, and report the two states differently
 ([scripts/daily-sweep.sh](../scripts/daily-sweep.sh)):
 
+Two independent tests, and the branch is stale if **either** fires:
+
 ```sh
-merged=$(git … merge-tree --write-tree main "$b")
-[ "$merged" = "$(git … rev-parse main^{tree})" ] && stale
+# historical: was this content ever incorporated into main?
+git cherry main "$(git commit-tree "$b^{tree}" -p "$mb")" | grep -q '^-'
+# present-tense: would merging it change main at all?
+[ "$(git merge-tree --write-tree main "$b")" = "$(git rev-parse main^{tree})" ]
 ```
 
-Ask the question the sweep actually means — *would merging this branch change
-main?* — by merging in memory and comparing the resulting tree to main's. Two
-routes to the same content produce the same tree oid, so this is immune to
-everything the earlier attempts tripped over.
+That is not belt-and-braces. **Each is blind exactly where the other sees**,
+and both blind spots are ordinary histories:
 
-It took **four** wrong versions to get there, and all four are worth recording,
-because they failed the same way: each was checked only against the history
-that happened to be on this disk that morning.
+| | main edits the same region *before* the squash | main edits the branch's file *after* the squash |
+|---|---|---|
+| patch-id replay | ✗ blind | ✓ sees |
+| merged-tree | ✓ sees | ✗ blind |
+
+Neither can turn genuinely outstanding work into "stale": extra commits change
+the whole-branch patch-id, and a merge that brings them in necessarily changes
+the tree.
+
+It took **five** wrong versions to get there, and all of them are worth
+recording, because they failed the same way: each was checked only against the
+history that happened to be on this disk that morning.
 
 **Wrong version 1, caught by self-review:** `[ -z "$(git diff --stat main "$b")" ]`.
 A *failed* `git diff` produces empty stdout, empty read as "no differences",
@@ -1065,11 +1076,29 @@ helper says: unmerged 1               <- false positive
 said *same file*; the actual precondition is *within each other's diff context*,
 which is a narrower thing that the first fixture missed.
 
-This is what finally moved the check off patch-ids. `git merge-tree
---write-tree` compares content, not patches, so main editing anything first is
-irrelevant. `--write-tree` needs git 2.38+, so it's capability-probed (the old
-three-argument `merge-tree` would silently misread these arguments) with the
-patch-id path kept as a fallback.
+This moved the check onto `git merge-tree --write-tree`, which compares content
+rather than patches. `--write-tree` needs git 2.38+, so it's capability-probed
+(the old three-argument `merge-tree` would silently misread these arguments).
+
+**Wrong version 5, Codex once more — and the one that mattered most.** Deciding
+purely on a merge into main's *current tip* breaks the moment main touches a
+path the branch touched. Merge the stale branch back in and the tree changes,
+or conflicts, so a fully-shipped branch reads as outstanding work:
+
+```
+helper:      unmerged 1
+git cherry:  - 838b7c16…        <- shipped, and the historical test can see it
+```
+
+This is not an exotic history. It happens the first time anyone edits that file
+again — which for a branch like the one that started this whole entry, touching
+`claude-usage.ts` and `page.tsx`, would be days. The fix would have decayed
+silently back into the false positive it was written to remove, and the next
+sweep would have had no way to tell.
+
+So: both tests, either one sufficient, for the reason tabulated above. What
+finally worked was not a better single primitive but noticing the two failures
+were complements.
 
 ### The quieter bug underneath all of it
 
@@ -1109,6 +1138,8 @@ builds each git topology from scratch in a temp dir — 8 cases, ~2s:
 | squash-merged, **main advanced twice** | `stale 1` |
 | squash-merged, **branch merged main back** | `stale 2` |
 | squash-merged, **main edited the same region first** | `stale 1` |
+| squash-merged, **main revised that file afterwards** | `stale 1` |
+| squash-merged, **main deleted that file afterwards** | `stale 1` |
 | work added *after* the squash | `unmerged 2` |
 | branch conflicts with main | `unmerged 1` |
 | no common ancestor | `unmerged` |
@@ -1122,10 +1153,12 @@ broken version was restored and re-run:
 | v2, tip comparison | ✗ *"stays stale after main advances"* |
 | v3, patch-id only | ✗ *"stays stale when the branch merged main back"* |
 | v4, + merge-base guard | ✗ *"same region edited first"*, ✗ both `unreadable` cases |
-| shipped | ✓ 11 pass |
+| v5, merged-tree only | ✗ both *"main revised/deleted that file afterwards"* |
+| shipped | ✓ 13 pass |
 
-Each wrong version fails exactly the cases written for it. Full suite
-**733 passed / 59 files** before the two additions.
+Each wrong version fails exactly the cases written for it — which is the only
+reason to believe the shipped one is better rather than merely newer. Full
+suite **738 passed / 59 files**.
 
 The branch still appears in FULL STATE — a stale ref is real, and per the
 standing rule nothing gets deleted without the user — but it now says what it

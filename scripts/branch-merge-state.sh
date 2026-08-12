@@ -42,40 +42,6 @@ if [ "$ahead" = "0" ]; then
   exit 0
 fi
 
-base_tree=$(g rev-parse --verify --quiet "$base^{tree}" 2>/dev/null || true)
-
-# The actual question is "would merging this branch change base?", so ask it
-# directly: merge in memory and compare the resulting tree to base's.
-#
-# This replaces a patch-id comparison that was wrong in a common case. Replaying
-# the branch as one commit on its merge base produces a *different patch* from
-# the squash commit whenever base edited the same region first — the squash's
-# diff is against already-modified base, the probe's is against the old fork
-# point, and differing context lines mean differing patch-ids. `git cherry` then
-# reports shipped work as outstanding. Trees have no such sensitivity: two
-# routes to the same content produce the same tree oid.
-#
-# --write-tree requires git 2.38+. Probed rather than assumed, because the old
-# three-argument form of merge-tree would silently misread these arguments.
-if [ -n "$base_tree" ] &&
-   probe=$(g merge-tree --write-tree "$base" "$base" 2>/dev/null) &&
-   [ "$probe" = "$base_tree" ]; then
-  if merged=$(g merge-tree --write-tree "$base" "$branch" 2>/dev/null); then
-    # A conflict exits nonzero and lands below as unmerged — correctly, since a
-    # branch that cannot be merged cleanly plainly still has work in it.
-    if [ "$merged" = "$base_tree" ]; then
-      echo "stale $ahead"
-      exit 0
-    fi
-  fi
-  echo "unmerged $ahead"
-  exit 0
-fi
-
-# ---- Fallback for git < 2.38 -----------------------------------------------
-# Weaker than the merge-tree path above (it is the patch-id logic, with the
-# same-region blind spot), but better than reporting every squash-merged branch
-# as outstanding work.
 mb=$(g merge-base "$base" "$branch" 2>/dev/null || true)
 if [ -z "$mb" ]; then
   # No common ancestor. Not something we can call shipped.
@@ -83,17 +49,51 @@ if [ -z "$mb" ]; then
   exit 0
 fi
 
-# Contributes nothing over the fork point — an empty branch, or one that merged
-# base back in after being squashed, which moves the merge base onto the squash
-# commit. That topology reaches the patch-id probe as an *empty* commit, which
-# `git cherry` correctly reports as `+`, so this test has to come first.
+# Two independent tests below, and the branch is stale if *either* fires. That
+# is not belt-and-braces: each one is blind exactly where the other sees, and
+# both blind spots are ordinary histories that showed up in review.
+#
+#   patch-id replay   — blind when base edited the same region *before* the
+#                       squash (differing context, differing patch-id)
+#   merged-tree       — blind when base edited the branch's paths *after* the
+#                       squash (the merge then changes the tree, or conflicts)
+#
+# Neither can turn genuinely outstanding work into "stale": extra commits on
+# the branch change the whole-branch patch-id, and a merge that adds them
+# necessarily changes the tree.
+
+# 1. Contributes nothing over the fork point — an empty branch, or one that
+#    merged base back in after being squashed, which moves the merge base onto
+#    the squash commit. That reaches the replay below as an *empty* commit,
+#    which `git cherry` correctly reports as `+`, so this comes first.
 if g diff --quiet "$mb" "$branch" 2>/dev/null; then
   echo "stale $ahead"
   exit 0
 fi
 
+# 2. Replay the branch as one commit on its merge base — the shape a squash
+#    merge produces — and look for that patch-id anywhere in base's *history*.
+#    Being historical is what makes this survive base moving on afterwards.
+#    `git cherry base branch` does not work here: a squash collapses N commits
+#    into one, so none of the originals match.
 sq=$(g commit-tree "$branch^{tree}" -p "$mb" -m squash-probe 2>/dev/null || true)
 if [ -n "$sq" ] && g cherry "$base" "$sq" 2>/dev/null | grep -q '^-'; then
+  echo "stale $ahead"
+  exit 0
+fi
+
+# 3. Would merging actually change base? Trees compare content rather than
+#    patches, so unlike (2) this is indifferent to what base edited first.
+#    --write-tree needs git 2.38+, probed rather than assumed because the old
+#    three-argument merge-tree would silently misread these arguments. A
+#    conflict exits nonzero and falls through to unmerged, correctly — a branch
+#    that will not merge cleanly plainly still has work in it.
+base_tree=$(g rev-parse --verify --quiet "$base^{tree}" 2>/dev/null || true)
+if [ -n "$base_tree" ] &&
+   probe=$(g merge-tree --write-tree "$base" "$base" 2>/dev/null) &&
+   [ "$probe" = "$base_tree" ] &&
+   merged=$(g merge-tree --write-tree "$base" "$branch" 2>/dev/null) &&
+   [ "$merged" = "$base_tree" ]; then
   echo "stale $ahead"
   exit 0
 fi
