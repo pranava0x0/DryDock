@@ -14,6 +14,10 @@
 # Usage:  scripts/daily-sweep.sh [--full] [--no-save]
 set -uo pipefail
 
+# Resolved from this file, not the caller's cwd — the scheduled task and a
+# hand-run from anywhere both have to find the sibling helper.
+SWEEP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Piping this into `head` (or quitting `less` early) closes stdout, and the
 # next echo would kill the script on SIGPIPE — *before* it reaches the state
 # save at the bottom. The run then looks like it completed while silently
@@ -231,27 +235,11 @@ if [ -d "$PROJECTS_ROOT/DryDock/.git" ]; then
   git -C "$PROJECTS_ROOT/DryDock" for-each-ref --format='%(refname:short)' refs/heads |
   while read -r b; do
     [ "$b" = "main" ] && continue
-    n=$(git -C "$PROJECTS_ROOT/DryDock" rev-list --count "main..$b" 2>/dev/null || echo 0)
-    [ "$n" = "0" ] && continue
-    # A squash-merged PR leaves its local branch with commits main has never
-    # seen by SHA, while the *content* is already in main. Counting commits
-    # alone reports that as unmerged work every time a PR lands.
-    #
-    # Ask whether the branch's content was incorporated into main's *history*,
-    # not whether it equals main's current tip — main advances, and a tip
-    # comparison flips back to a false positive on the next unrelated commit.
-    # Replay the branch as a single commit on its merge base (the same shape a
-    # squash merge produces) and let `git cherry` look for that patch-id
-    # anywhere in main. Verified to survive main moving ahead; `git cherry`
-    # alone does not work here, since a squash collapses N commits into one and
-    # none of the original patch-ids match.
-    #
-    # Exit codes, not output: a git failure leaves $sq empty and falls through
-    # to the commit count below, rather than reading as "merged".
-    mb=$(git -C "$PROJECTS_ROOT/DryDock" merge-base main "$b" 2>/dev/null || true)
-    sq=""
-    [ -n "$mb" ] && sq=$(git -C "$PROJECTS_ROOT/DryDock" commit-tree "$b^{tree}" -p "$mb" -m squash-probe 2>/dev/null || true)
-    if [ -n "$sq" ] && git -C "$PROJECTS_ROOT/DryDock" cherry main "$sq" 2>/dev/null | grep -q '^-'; then
+    # Classification lives in scripts/branch-merge-state.sh so it can be tested
+    # against fixture git histories (lib/sweep/branch-merge-state.test.ts).
+    read -r state n <<<"$("$SWEEP_DIR/branch-merge-state.sh" "$PROJECTS_ROOT/DryDock" "$b")"
+    [ "$state" = "in-sync" ] && continue
+    if [ "$state" = "stale" ]; then
       emit "branch:$b:merged" "BRANCH DryDock/$b — squash-merged into main, local ref stale"
       continue
     fi

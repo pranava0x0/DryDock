@@ -1027,7 +1027,9 @@ main's history. `git cherry` on the branch directly does **not** work: a squash
 collapses N commits into one, so none of the ten original patch-ids appear in
 main.
 
-It took two wrong versions to get there, and both are worth recording.
+It took **three** wrong versions to get there, and all three are worth
+recording, because they failed the same way: each was checked only against the
+history that happened to be on this disk that morning.
 
 **Wrong version 1, caught by self-review:** `[ -z "$(git diff --stat main "$b")" ]`.
 A *failed* `git diff` produces empty stdout, empty read as "no differences",
@@ -1042,17 +1044,52 @@ flips from `merged` to a commit count — recreating the exact false positive
 this change exists to remove. Merging **this PR** would have been the commit
 that broke it.
 
-That was checked rather than believed, in a throwaway clone, adding one
-unrelated commit to main between two probes:
+**Wrong version 3, also caught by Codex:** the patch-id replay alone. If a
+squash-merged branch later merges main back in, the merge base moves onto the
+squash commit, so the synthesized probe is an *empty* commit — which `git
+cherry` correctly reports as `+`, no equivalent upstream. Nothing left to
+merge, reported as three commits of work. Reproduced from scratch before
+believing it. Hence the merge-base emptiness test running **first**, with the
+patch-id replay as the second gate.
 
-| | today's main | after one unrelated commit |
-|---|---|---|
-| tip comparison (v2) | merged | **counts as unmerged** |
-| patch-id replay (shipped) | merged | merged |
+### The test, which is the actual fix
 
-And the other direction, so the category isn't just being suppressed: the
-shipped check reports this run's own `sweep/2026-08-12` branch as genuinely
-unmerged, correctly, throughout.
+Three wrong versions in one morning, each passing on the repo in front of it,
+is the argument for [AGENTS.md](../AGENTS.md)'s "add a vitest test for every bug
+fix" — a rule Codex cited at P1 and which this run had quietly skipped on the
+grounds that it was "only shell".
+
+The classification is now its own script,
+[scripts/branch-merge-state.sh](../scripts/branch-merge-state.sh), taking a
+repo path and a branch and printing `in-sync` / `stale <n>` / `unmerged <n>`.
+That extraction is what makes it testable at all: `daily-sweep.sh` makes five
+`gh` calls, so it can't be invoked wholesale from a test.
+
+[lib/sweep/branch-merge-state.test.ts](../lib/sweep/branch-merge-state.test.ts)
+builds each git topology from scratch in a temp dir — 8 cases, ~2s:
+
+| topology | expected |
+|---|---|
+| no commits ahead | `in-sync` |
+| real outstanding work | `unmerged 2` |
+| squash-merged | `stale 2` |
+| squash-merged, **main advanced twice** | `stale 1` |
+| squash-merged, **branch merged main back** | `stale 2` |
+| work added *after* the squash | `unmerged 2` |
+| no common ancestor | `unmerged` |
+| unreadable ref | never `stale` |
+
+Then the part that makes them regression tests rather than decoration — each
+broken version was restored and re-run:
+
+| version under test | result |
+|---|---|
+| v2, tip comparison | ✗ fails *"stays stale after main advances"*, 7 pass |
+| v3, patch-id only | ✗ fails *"stays stale when the branch merged main back"*, 7 pass |
+| shipped | ✓ 8 pass |
+
+Each wrong version fails exactly the case that was written for it. Full suite
+**733 passed / 59 files**.
 
 The branch still appears in FULL STATE — a stale ref is real, and per the
 standing rule nothing gets deleted without the user — but it now says what it
@@ -1120,9 +1157,13 @@ reaches for the launch config.
 - The general shape worth carrying past this repo: **a count of commits is not
   a measure of unmerged work under squash merges.** The routine's own merge
   strategy was generating its own findings.
-- And the sharper one, from the two failed attempts: **a fix for a
-  false positive needs testing against a moved world, not the world that
-  produced the false positive.** Both wrong versions passed on today's repo.
-  The tip comparison only worked because the merge being detected happened to
-  be the most recent one — a condition that expires on the next commit, which
-  was this PR. Advance the state artificially and re-probe.
+- And the sharper one, from the three failed attempts: **a fix for a false
+  positive needs testing against a moved world, not the world that produced the
+  false positive.** All three wrong versions passed on today's repo. The tip
+  comparison only worked because the merge being detected happened to be the
+  most recent one — a condition that expires on the next commit, which was this
+  PR. Build the topology, don't sample the one on disk.
+- **"It's only a shell script" is not an exemption from the test rule.** The
+  cost of the fixture harness was about fifteen minutes; it caught two of the
+  three wrong versions on replay and would have caught them the first time.
+  The rule in AGENTS.md says *every* bug fix, and this run had to be told.
