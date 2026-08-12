@@ -42,6 +42,10 @@ function work(over: Partial<GithubWork> = {}): GithubWork {
     login: "me",
     pulls: [],
     issues: [],
+    pullsOk: true,
+    issuesOk: true,
+    pullsTruncated: false,
+    issuesTruncated: false,
     fetchedAt: NOW.toISOString(),
     ...over,
   };
@@ -59,6 +63,10 @@ const EMPTY_PULLS: WeeklyPullActivity = {
   reason: null,
   merged: [],
   opened: [],
+  mergedOk: true,
+  openedOk: true,
+  mergedTruncated: false,
+  openedTruncated: false,
   repositories: [],
   fetchedAt: NOW.toISOString(),
 };
@@ -240,6 +248,69 @@ describe("buildOverview", () => {
       NOW,
     );
     expect(overview.shipped.byProject[0].name).toBe("Orphan");
+  });
+
+  /**
+   * Codex review on PR #37, all four findings the same shape: a two-query
+   * connector returns status "ok" when *either* half succeeds, so a consumer
+   * reading only `status` renders the failed half as a confident zero.
+   */
+  describe("partial availability (Codex PR #37)", () => {
+    it("reports a failed open-issues query as null, not zero", () => {
+      const overview = buildOverview(
+        {
+          work: work({
+            pulls: [pull()],
+            issues: [],
+            issuesOk: false,
+            reason: "issues unavailable — rate limited",
+          }),
+          usage: null,
+          commits: EMPTY_COMMITS,
+          pulls: EMPTY_PULLS,
+        },
+        6,
+        NOW,
+      );
+      expect(overview.github.openPulls).toBe(1);
+      expect(overview.github.openIssues).toBeNull();
+      // Still "available" overall — one half worked — so the reason has to
+      // carry the news instead.
+      expect(overview.todosUnavailable).toBe(false);
+      expect(overview.github.reason).toBe("issues unavailable — rate limited");
+    });
+
+    it("reports a failed merged-PR query as null, not zero merged", () => {
+      const overview = buildOverview(
+        {
+          work: work(),
+          usage: null,
+          commits: EMPTY_COMMITS,
+          pulls: { ...EMPTY_PULLS, mergedOk: false, reason: "merged unavailable" },
+        },
+        6,
+        NOW,
+      );
+      expect(overview.shipped.pullsMerged).toBeNull();
+      expect(overview.shipped.pullsOpened).toBe(0);
+      expect(overview.shipped.pullsUnavailable).toBe(false);
+    });
+
+    it("marks counts that came back at the search limit as floors", () => {
+      const overview = buildOverview(
+        {
+          work: work({ pullsTruncated: true }),
+          usage: null,
+          commits: EMPTY_COMMITS,
+          pulls: { ...EMPTY_PULLS, mergedTruncated: true },
+        },
+        6,
+        NOW,
+      );
+      expect(overview.github.openPullsTruncated).toBe(true);
+      expect(overview.github.openIssuesTruncated).toBe(false);
+      expect(overview.shipped.pullsMergedTruncated).toBe(true);
+    });
   });
 
   it("distinguishes unavailable weekly PRs from zero merged", () => {

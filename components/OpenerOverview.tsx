@@ -14,6 +14,18 @@ const compact = new Intl.NumberFormat(undefined, {
 });
 
 /**
+ * A count, marked `30+` when it came back at the search limit.
+ *
+ * `gh search` caps each category, so a category sitting exactly on its cap is
+ * a ceiling with an unknown remainder behind it — not a total. Null passes
+ * through so the tile renders an em dash for "not read".
+ */
+function countLabel(value: number | null, truncated: boolean): string | null {
+  if (value === null) return null;
+  return truncated ? `${value}+` : String(value);
+}
+
+/**
  * The opener. Two questions, in order: what happened this week, and what is
  * waiting on you.
  *
@@ -28,7 +40,17 @@ export function OpenerOverview() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // The server answers a stale request immediately with `refreshing: true`
+    // and rebuilds behind it. A single mount fetch would therefore leave this
+    // browser on the old numbers under a permanent "refreshing" label until
+    // the user navigated — so poll back for the rebuilt payload. Bounded,
+    // because a read that keeps reporting `refreshing` must not become an
+    // endless poll.
+    const REFRESH_POLL_MS = 3000;
+    const MAX_FOLLOW_UPS = 10;
+
+    const load = async (followUps: number): Promise<void> => {
       try {
         const res = await fetch("/api/overview");
         const body = await res.json();
@@ -36,14 +58,20 @@ export function OpenerOverview() {
         if (!res.ok) throw new Error(body.error ?? "Failed to load overview");
         setData(body);
         setError(null);
+        if (body.refreshing === true && followUps < MAX_FOLLOW_UPS) {
+          timer = setTimeout(() => void load(followUps + 1), REFRESH_POLL_MS);
+        }
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    };
+
+    void load(0);
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
@@ -89,8 +117,14 @@ export function OpenerOverview() {
         />
         <Stat
           label="PRs merged"
-          value={shipped.pullsUnavailable ? null : shipped.pullsMerged}
-          sub={shipped.pullsUnavailable ? "gh unavailable" : `${shipped.pullsOpened} opened`}
+          value={countLabel(shipped.pullsMerged, shipped.pullsMergedTruncated)}
+          sub={
+            shipped.pullsUnavailable
+              ? "gh unavailable"
+              : shipped.pullsOpened === null
+                ? "opened: not read"
+                : `${countLabel(shipped.pullsOpened, shipped.pullsOpenedTruncated)} opened`
+          }
         />
         <Stat
           label="sessions"
@@ -104,14 +138,29 @@ export function OpenerOverview() {
         />
         <Stat
           label="open"
-          value={todosUnavailable ? null : github.openPulls + github.openIssues}
+          value={
+            // Only a real total when both halves were read. Adding a null to a
+            // number would have quietly reported the surviving half as the sum.
+            github.openPulls === null || github.openIssues === null
+              ? null
+              : countLabel(
+                  github.openPulls + github.openIssues,
+                  github.openPullsTruncated || github.openIssuesTruncated,
+                )
+          }
           sub={
             todosUnavailable
               ? "gh unavailable"
-              : `${github.openPulls} PR${github.openPulls === 1 ? "" : "s"} · ${github.openIssues} issue${github.openIssues === 1 ? "" : "s"}`
+              : `${github.openPulls === null ? "—" : countLabel(github.openPulls, github.openPullsTruncated)} PRs · ${github.openIssues === null ? "—" : countLabel(github.openIssues, github.openIssuesTruncated)} issues`
           }
         />
       </dl>
+
+      {!todosUnavailable && github.reason ? (
+        // Partial failure: one of the two searches came back, one didn't. The
+        // affected tile already shows an em dash; this says why.
+        <p className="mt-2 text-xs text-kraken-shadow">{github.reason}</p>
+      ) : null}
 
       {shipped.unreadableRepos > 0 ? (
         // Never let a partial read pass as a total.

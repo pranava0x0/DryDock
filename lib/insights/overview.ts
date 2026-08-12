@@ -45,11 +45,19 @@ export interface OverviewShipped {
   unreadableRepos: number;
   /** Busiest repos first, with recent subjects for a sense of what happened. */
   byProject: Array<{ path: string; name: string; count: number; subjects: string[] }>;
-  pullsMerged: number;
-  pullsOpened: number;
+  /**
+   * Null means "not read", never "none". Each query fails independently, so a
+   * failed merged-PR search must not render as `0 PRs merged` — a count that
+   * was never fetched has to look different from a real zero.
+   */
+  pullsMerged: number | null;
+  pullsOpened: number | null;
+  /** True when the count is a floor (the query came back at its limit). */
+  pullsMergedTruncated: boolean;
+  pullsOpenedTruncated: boolean;
   /** Newest-first, capped for the opener. */
   recentMerged: Array<{ title: string; repository: string; number: number; url: string; at: string }>;
-  /** Null when `gh` couldn't answer — distinct from "you merged nothing". */
+  /** True only when *neither* weekly query could be read. */
   pullsUnavailable: boolean;
   pullsReason: string | null;
 }
@@ -61,8 +69,12 @@ export interface Overview {
     status: GithubWork["status"];
     reason: string | null;
     login: string | null;
-    openPulls: number;
-    openIssues: number;
+    /** Null when that category's query failed — not zero. */
+    openPulls: number | null;
+    openIssues: number | null;
+    /** True when the category hit SEARCH_LIMIT, so the count is a floor. */
+    openPullsTruncated: boolean;
+    openIssuesTruncated: boolean;
     fetchedAt: string | null;
   };
   todos: OverviewTodo[];
@@ -206,6 +218,9 @@ export function buildOverview(
   limit = 6,
   now: Date = new Date(),
 ): Overview {
+  // "Unavailable" here means the whole read failed. Partial failures are
+  // carried per count as nulls below, because `status` stays "ok" when either
+  // half of a two-query connector succeeded.
   const unavailable = work.status !== "ok";
   const pullsUnavailable = pulls.status !== "ok";
 
@@ -229,8 +244,10 @@ export function buildOverview(
         // a summary line, and never blank.
         name: projectNames?.get(p.path) ?? p.path.split("/").pop() ?? p.path,
       })),
-      pullsMerged: pulls.merged.length,
-      pullsOpened: pulls.opened.length,
+      pullsMerged: pulls.mergedOk ? pulls.merged.length : null,
+      pullsOpened: pulls.openedOk ? pulls.opened.length : null,
+      pullsMergedTruncated: pulls.mergedTruncated,
+      pullsOpenedTruncated: pulls.openedTruncated,
       recentMerged: pulls.merged.slice(0, RECENT_MERGED_LIMIT).map((p) => ({
         title: p.title,
         repository: p.repository,
@@ -245,8 +262,10 @@ export function buildOverview(
       status: work.status,
       reason: work.reason,
       login: work.login,
-      openPulls: work.pulls.length,
-      openIssues: work.issues.length,
+      openPulls: work.pullsOk ? work.pulls.length : null,
+      openIssues: work.issuesOk ? work.issues.length : null,
+      openPullsTruncated: work.pullsTruncated,
+      openIssuesTruncated: work.issuesTruncated,
       fetchedAt: work.fetchedAt ?? null,
     },
     ...(() => {

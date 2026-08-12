@@ -25,6 +25,16 @@ export interface WeeklyPullActivity {
   reason: string | null;
   merged: WeeklyPull[];
   opened: WeeklyPull[];
+  /**
+   * Per-query availability. `status` is "ok" when either half succeeded, so a
+   * consumer reading only `status` renders `0 PRs merged` for a count that was
+   * never read. Check these before presenting either length.
+   */
+  mergedOk: boolean;
+  openedOk: boolean;
+  /** Came back at SEARCH_LIMIT — a floor, not a total. */
+  mergedTruncated: boolean;
+  openedTruncated: boolean;
   /** Distinct repositories touched by either list. */
   repositories: string[];
   fetchedAt: string;
@@ -57,6 +67,10 @@ function unavailable(reason: string): WeeklyPullActivity {
     reason,
     merged: [],
     opened: [],
+    mergedOk: false,
+    openedOk: false,
+    mergedTruncated: false,
+    openedTruncated: false,
     repositories: [],
     fetchedAt: new Date().toISOString(),
   };
@@ -146,6 +160,10 @@ export async function fetchWeeklyPullActivity(
         : null,
     merged: mergedList,
     opened: openedList,
+    mergedOk: merged.ok,
+    openedOk: opened.ok,
+    mergedTruncated: (merged.data ?? []).length >= SEARCH_LIMIT,
+    openedTruncated: (opened.data ?? []).length >= SEARCH_LIMIT,
     repositories: [
       ...new Set([...mergedList, ...openedList].map((p) => p.repository)),
     ].sort(),
