@@ -244,6 +244,25 @@ describe("branch-merge-state.sh", () => {
     expect(state(repo, "feat")).toBe("unreadable");
   });
 
+  /**
+   * The mirror of the case above, on the base side. Note the fixture has to
+   * advance main after the squash: without that, main and the branch have
+   * identical content and therefore *the same tree object*, so deleting "main's
+   * tree" deletes the branch's too and the earlier check catches it — which is
+   * exactly how a first attempt at this fixture passed against broken code.
+   */
+  it("reports unreadable when main's tree object is missing", () => {
+    const repo = newRepo();
+    git(repo, "checkout", "-q", "-b", "feat");
+    commit(repo, "a.txt", "work\n", "w1");
+    squashMerge(repo, "feat", "squash of feat (#1)");
+    commit(repo, "unrelated.txt", "later\n", "an unrelated later commit");
+    const tree = git(repo, "rev-parse", "main^{tree}");
+    expect(tree).not.toBe(git(repo, "rev-parse", "feat^{tree}"));
+    rmSync(join(repo, ".git", "objects", tree.slice(0, 2), tree.slice(2)), { force: true });
+    expect(state(repo, "feat")).toBe("unreadable");
+  });
+
   it("reports unmerged when the branch would conflict with main", () => {
     const repo = newRepo();
     git(repo, "checkout", "-q", "-b", "feat");

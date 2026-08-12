@@ -110,8 +110,16 @@ fi
 #    three-argument merge-tree would silently misread these arguments. A
 #    conflict exits nonzero and falls through to unmerged, correctly — a branch
 #    that will not merge cleanly plainly still has work in it.
+# A base commit can resolve while its tree object is missing, which the ref
+# checks above cannot see. Without the tree there is nothing to compare against,
+# so this is an unreadable repo — not a branch with confirmed outstanding work.
 base_tree=$(g rev-parse --verify --quiet "$base^{tree}" 2>/dev/null || true)
-if [ -n "$base_tree" ] &&
+if [ -z "$base_tree" ]; then
+  echo "unreadable"
+  exit 0
+fi
+
+if
    probe=$(g merge-tree --write-tree "$base" "$base" 2>/dev/null) &&
    [ "$probe" = "$base_tree" ] &&
    merged=$(g merge-tree --write-tree "$base" "$branch" 2>/dev/null) &&

@@ -1040,7 +1040,7 @@ should be `stale` is a nuisance line in a sweep; `stale` that should be
 again. `git patch-id --verbatim` (git 2.39+, probed, `git cherry` as fallback)
 fixes it.
 
-It took **six** wrong versions to get there, and all of them are worth
+It took **seven** wrong versions to get there, and all of them are worth
 recording, because they failed the same way: each was checked only against the
 history that happened to be on this disk that morning.
 
@@ -1157,7 +1157,8 @@ builds each git topology from scratch in a temp dir — 8 cases, ~2s:
 | squash-merged, **main deleted that file afterwards** | `stale 1` |
 | work added *after* the squash | `unmerged 2` |
 | **whitespace-equivalent patch on main** | `unmerged 1` |
-| **missing tree object** | `unreadable` |
+| **missing tree object** (branch side) | `unreadable` |
+| **missing tree object** (main side) | `unreadable` |
 | branch conflicts with main | `unmerged 1` |
 | no common ancestor | `unmerged` |
 | unreadable branch / unreadable base | `unreadable` |
@@ -1172,11 +1173,12 @@ broken version was restored and re-run:
 | v4, + merge-base guard | ✗ *"same region edited first"*, ✗ both `unreadable` cases |
 | v5, merged-tree only | ✗ both *"main revised/deleted that file afterwards"* |
 | v6, `git cherry` | ✗ *"whitespace-equivalent patch"*, ✗ *"missing tree object"* |
-| shipped | ✓ 15 pass |
+| v7, branch-side tree guard only | ✗ *"main's tree object is missing"* |
+| shipped | ✓ 16 pass |
 
 Each wrong version fails exactly the cases written for it — which is the only
 reason to believe the shipped one is better rather than merely newer. Full
-suite **740 passed / 59 files**.
+suite **741 passed / 59 files**.
 
 The branch still appears in FULL STATE — a stale ref is real, and per the
 standing rule nothing gets deleted without the user — but it now says what it
@@ -1257,8 +1259,16 @@ reaches for the launch config.
 - **A negative assertion passes for the wrong reason.** `not.toContain("stale")`
   was satisfied by the bug it was meant to catch. Assert the state you want by
   equality; "didn't do the bad thing" is not "did the right thing".
-- **Failing to reproduce a reviewer's finding is not evidence against it.** The
-  same-region case came back clean on the first fixture and was one edit away
-  from being dismissed. When a repro fails, suspect the repro until the
-  precondition is understood precisely — "same file" turned out to mean
-  "within three lines".
+- **Failing to reproduce a reviewer's finding is not evidence against it.** This
+  happened *twice*, on different findings, and both were real. The same-region
+  case came back clean because the edits were six lines apart instead of three.
+  The corrupt-base-tree case came back clean because the fixture's main and
+  branch had identical content and therefore **the same tree object** — so
+  deleting "main's tree" deleted the branch's too, and an earlier guard caught
+  it. Both times the finding was one fixture detail away from being dismissed.
+  When a repro comes back clean, suspect the repro first.
+- **Rank a classifier's two error directions before trusting either.** `unmerged`
+  that should be `stale` is a nuisance line in a sweep. `stale` that should be
+  `unmerged` means the sweep goes silent about real work forever. They are not
+  symmetric, and the whitespace bug lived on the silent side while this log was
+  asserting it couldn't happen.
