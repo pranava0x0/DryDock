@@ -5,7 +5,9 @@ description: >
   "launch", "launch drydock", "start drydock", "run drydock", "start the
   dev server", "fire up drydock," or just opens the project and wants it
   running. Reuses an existing preview if one is already up; otherwise
-  starts a fresh one on port 3000 (autoPort) and reports the URL.
+  starts a fresh one on port 3000 (autoPort) and reports the URL. Shows
+  the app in the in-app Browser pane — if the user names Chrome or "my
+  browser," use the `launch-chrome` skill instead.
 compatibility: >
   Requires the Claude_Preview MCP (preview_start, preview_list,
   preview_logs) and a populated .claude/launch.json with a `drydock-dev`
@@ -28,6 +30,10 @@ In a session, the user can type any of:
 - `start drydock`
 - `start the dev server`
 - `run drydock`
+
+If the request names Chrome or the user's own browser ("launch drydock in
+my chrome", "open it in my browser"), hand off to `launch-chrome` —
+this skill only surfaces the app in the in-app Browser pane.
 
 ## Behavior
 

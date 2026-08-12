@@ -220,6 +220,18 @@ docs/
 - **Mobile first.** If you change UI, resize the preview to 375×812 and verify before declaring done.
 - **No API keys anywhere.** If you ever feel the urge to add an `ANTHROPIC_API_KEY` env var, stop — the design is sub-processes only.
 - **Touch targets stay 44px+.** See [design.md](design.md).
+- **Distinguish "unread" from "zero" in every payload and every tile.** This codebase has produced the same bug six times (see the named bug class in [CLAUDE.md](CLAUDE.md)). Concretely: a `status` field alongside the data, never a bare empty array; an em dash rather than `0` when a read failed; `filesScanned` / `unreadableRepos` counts so a partial read can't pass as a total; and a reason string the UI can render.
+- **A connector that runs more than one query needs availability per *count*, not one `status` for the whole read.** Both GitHub connectors return `status: "ok"` when either half succeeds — by design, so one failure doesn't blank the other — which means `status` alone cannot distinguish "no open issues" from "the issues query failed". Every count carries its own flag (`pullsOk`/`issuesOk`, `mergedOk`/`openedOk`) and becomes `null` when unread; `null` renders as an em dash. Codex found four instances of this on PR #37, in code written an hour after the rule above was added to this file. Reference shapes: [lib/insights/overview.ts](lib/insights/overview.ts), [lib/connectors/github-work.ts](lib/connectors/github-work.ts).
+- **Never add a nullable count to a non-nullable one.** A derived total (`openPulls + openIssues`) must be `null` unless every input was read, or the surviving half gets reported as the sum.
+- **Render a count that hit its query limit as `N+`.** `gh search` caps each category at 30 (`SEARCH_LIMIT`), so a category on exactly 30 is an unknown backlog. Compare against the raw row count, not the mapped list — a row dropped in mapping still consumed a slot.
+- **Stale-while-revalidate needs its client half.** A route that answers stale with `refreshing: true` obliges the caller to poll back for the rebuilt payload; a one-shot `useEffect` leaves that browser on old numbers under a permanent "refreshing" label. Bounded follow-up poll, cleared on unmount — see [components/OpenerOverview.tsx](components/OpenerOverview.tsx).
+- **A cap that is exactly hit is a ceiling, not a coincidence** — say so in the UI. `MAX_ITEMS_PER_PROJECT` is 40 and DryDock's own backlog has 54 items, so the panel reports "14 further items beyond the per-project cap" instead of presenting 40 as the file.
+
+### Agent / token retrospective — 2026-08-12 session
+
+**Zero subagents ran, deliberately, and it was the right call.** The session's central task was an accuracy audit ("is this number right?"), which turned on reading four specific files and correlating two counts to four significant figures. That is precisely the work that degrades when delegated: a subagent would have reported "the reader walks the projects directory" as testimony, and the actual finding — *the glob is one level deep* — lives in a detail an explorer summarises away. The prior session's lesson ("subagent reports are testimony, not evidence; spot-verify every load-bearing claim") argues for doing this class of work inline, not just verifying it afterwards.
+
+Cheaper routes that would have been equally accurate: the decisive evidence came from two throwaway Node scripts (~90 lines) and four `grep`s. The one genuinely wasteful stretch was **four consecutive attempts to force Chrome window focus** — `switch_to_tab`, then AppleScript on `active tab index` and window `index` — each reporting success and reverting, because the user was actively using the browser. One attempt plus an honest "it's open in a background tab" was the correct stopping point; see `.claude/skills/launch-chrome/SKILL.md`, which now encodes exactly that.
 
 ## Workflow
 
@@ -245,6 +257,22 @@ npm run build          # production build, used by CI / before deploy
 | Provider / dispatch logic | `npm test` + a `DRYDOCK_PROVIDER_STUB=1` dry run (`drydock-uat` skill) |
 | Cap / queue / cancel | `npm test` (`dispatch-cap.test.ts`, `stream-route.test.ts`) — verify against a prod build, not `next dev` (see DD-009) |
 | Dependency install/upgrade | Check `vibe-coding-security` advisories first, then `npm run build && npm test` |
+| Any number the UI presents as fact | Recompute it independently (a throwaway script sharing no code with the app) and compare — see DD-025 |
+| Endpoint you suspect is slow | Time it cold *and* warm, then `grep Compiled` in the dev log to separate route compilation from handler work |
+
+**Never `npm run build` while the dev server is up on this tree.** It rewrites `.next/` underneath the running server, which then 500s every route with `Cannot find module './NNN.js'` — an error pointing at webpack internals rather than at the cause. Use `npx tsc --noEmit` for a type check while the server runs, and build in a separate checkout or after stopping the server.
+
+### Reading `~/.claude/projects` (usage readers)
+
+The layout has three depths, and only the first is a session log:
+
+```
+projects/<encoded-path>/<sessionId>.jsonl                       ← the session
+projects/<encoded-path>/<sessionId>/subagents/agent-*.jsonl      ← its subagents
+projects/<encoded-path>/<sessionId>/subagents/…/subagents/*.jsonl ← nested agents
+```
+
+On this machine that is 221 / 218 / 418 files. **Any reader must recurse** — a one-level glob hid 74% of the corpus and 54% of a week's input tokens (DD-025). Subagent records carry `isSidechain: true` and the **parent's** `sessionId`, so attribute turns by the record's `sessionId`, never by filename, or every agent becomes a phantom session. Subagent tokens bill to the same account and the same rate-limit window as the main loop; excluding them isn't conservative, it's wrong.
 
 ## Where to add new things
 

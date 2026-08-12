@@ -88,3 +88,48 @@ body {
     min-height: 44px;
   }
 }
+
+/* A background refresh indicator, kept deliberately cheap.
+
+   The provider-budgets read takes seconds, so the panel serves a cached
+   payload and re-reads behind it. This animates the "refreshing" label and
+   its dot while that's in flight.
+
+   Only `opacity` is animated — it's compositor-only, so no layout and no
+   repaint of surrounding text, which matters because this sits inside a
+   panel of live-updating numbers on a phone over a Cloudflare Tunnel.
+
+   Reduced motion pins it fully opaque rather than removing it: the fact
+   that a refresh is running is information, not decoration, so it must
+   survive when the animation doesn't. */
+@keyframes dd-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.dd-pulse {
+  animation: dd-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dd-pulse {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* Horizontal scroll with no visible scrollbar.
+
+   Used by the header nav below `sm`, where the tab row is wider than the
+   viewport. The row genuinely scrolls — the tabs stay reachable — but a
+   permanent scrollbar across a 44px-tall header on a phone costs more than
+   it explains. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

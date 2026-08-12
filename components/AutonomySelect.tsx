@@ -2,14 +2,35 @@
 
 import type { AutonomyLevel } from "@/lib/providers/types";
 
+/**
+ * Hints spell out the *consequence*, not the setting. The previous wording
+ * ("plan/analyze, no writes", "file edits + tests") named the flags rather
+ * than answering the only question that matters before dispatching an agent
+ * at your repo: what can it change?
+ *
+ * These track `autonomyArgs()` in lib/providers/claude.ts — the Edits shell
+ * list is that function's EDITS_BASH_ALLOWLIST. Keep them in step.
+ */
 const OPTIONS: Array<{
   value: AutonomyLevel;
   label: string;
   hint: string;
 }> = [
-  { value: "readonly", label: "Read-only", hint: "plan/analyze, no writes" },
-  { value: "edits", label: "Edits", hint: "file edits + tests" },
-  { value: "full", label: "Full", hint: "edits + any shell command" },
+  {
+    value: "readonly",
+    label: "Read-only",
+    hint: "Reads and plans only. Changes nothing on disk, runs no commands.",
+  },
+  {
+    value: "edits",
+    label: "Edits",
+    hint: "Edits files. Shell limited to tests, typecheck, build, and read-only git.",
+  },
+  {
+    value: "full",
+    label: "Full",
+    hint: "Edits files and runs any shell command in the project directory.",
+  },
 ];
 
 /**
@@ -30,6 +51,9 @@ export function AutonomySelect({
   return (
     <fieldset className="block text-sm">
       <legend className="text-zinc-300">Agent autonomy</legend>
+      <span className="mt-0.5 block text-xs text-kraken-shadow">
+        How far an agent dispatched here may go without asking you first.
+      </span>
       <div className="mt-1 flex gap-2">
         {OPTIONS.map((option) => {
           const isSelected = value === option.value;

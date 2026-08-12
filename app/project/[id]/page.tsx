@@ -12,6 +12,7 @@ import { AddTaskModal } from "@/components/AddTaskModal";
 import { StreamViewer } from "@/components/StreamViewer";
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { ProjectDocs } from "@/components/ProjectDocs";
+import { ProjectBacklog } from "@/components/ProjectBacklog";
 import { AutonomySelect } from "@/components/AutonomySelect";
 
 // Next 15 wraps dynamic-route params in a Promise. `use()` unwraps it inside
@@ -206,6 +207,8 @@ export default function ProjectPage({
           </ul>
         )}
       </section>
+
+      <ProjectBacklog projectId={id} />
 
       <ProjectDocs projectId={id} />
 

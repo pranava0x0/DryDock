@@ -54,6 +54,21 @@ export interface GithubWork {
   login: string | null;
   pulls: GithubPull[];
   issues: GithubIssue[];
+  /**
+   * Per-category availability. `status` is "ok" when *either* half succeeded,
+   * so it cannot tell you that `issues: []` means "none open" rather than
+   * "the issues query failed" — a consumer reading only `status` renders a
+   * false zero. Check these before presenting either array's length.
+   */
+  pullsOk: boolean;
+  issuesOk: boolean;
+  /**
+   * True when the category came back at SEARCH_LIMIT, i.e. the list is a
+   * ceiling rather than a count. A cap that is exactly hit is an unknown
+   * backlog, so the UI must render "30+" rather than "30".
+   */
+  pullsTruncated: boolean;
+  issuesTruncated: boolean;
   fetchedAt: string;
 }
 
@@ -67,6 +82,10 @@ function unavailable(reason: string): GithubWork {
     login: null,
     pulls: [],
     issues: [],
+    pullsOk: false,
+    issuesOk: false,
+    pullsTruncated: false,
+    issuesTruncated: false,
     fetchedAt: new Date().toISOString(),
   };
 }
@@ -161,6 +180,12 @@ export async function fetchGithubWork(): Promise<GithubWork> {
       .map(toIssue)
       .filter((i): i is GithubIssue => i !== null)
       .sort(byUpdatedDesc),
+    pullsOk: pulls.ok,
+    issuesOk: issues.ok,
+    // Compare against the raw row count, not the mapped list: a row dropped by
+    // toPull for a missing repository still consumed one of the 30 slots.
+    pullsTruncated: (pulls.data ?? []).length >= SEARCH_LIMIT,
+    issuesTruncated: (issues.data ?? []).length >= SEARCH_LIMIT,
     fetchedAt: new Date().toISOString(),
   };
 }

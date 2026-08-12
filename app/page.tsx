@@ -7,17 +7,26 @@ import type { TaskCountsByStatus } from "@/lib/db/tasks";
 import { ProjectCard } from "@/components/ProjectCard";
 import { AddProjectModal } from "@/components/AddProjectModal";
 import { RunningTasksPanel } from "@/components/RunningTasksPanel";
+import { OpenerOverview } from "@/components/OpenerOverview";
 import { useAutoSync } from "@/components/useAutoSync";
 
 interface ProjectWithCounts extends Project {
   task_counts: TaskCountsByStatus;
 }
 
+/**
+ * Projects shown before the list is collapsed. Enough to cover "the things I
+ * am actually working on" given the list is sorted by last commit; the rest
+ * are one tap away.
+ */
+const VISIBLE_PROJECTS = 6;
+
 export default function Dashboard() {
   const [projects, setProjects] = useState<ProjectWithCounts[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [showAllProjects, setShowAllProjects] = useState(false);
 
   // Launch-time sync: fire one Apple Notes round-trip when the
   // dashboard mounts. No interval — the periodic poll lives on
@@ -47,11 +56,17 @@ export default function Dashboard() {
   return (
     <>
       <RunningTasksPanel />
+
+      {/* The opener leads with activity and open work. The project list is
+          still here, below, but it is reference material — not the first
+          thing you have to read. */}
+      <OpenerOverview />
+
       <section>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h1 className="text-xl font-semibold tracking-tight text-zinc-50">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold tracking-tight text-zinc-50">
             Projects
-          </h1>
+          </h2>
           <div className="flex items-center gap-3">
             <span className="text-sm text-kraken-shadow">
               {loading ? "loading…" : `${projects.length} total`}
@@ -64,6 +79,17 @@ export default function Dashboard() {
             </Link>
           </div>
         </div>
+        {/* The three numbers on every card were unlabelled in effect: the words
+            were there, but nothing said what a task being "pending" vs
+            "active" actually meant. Explained once here, newest-worked-on
+            first so the ordering isn't a mystery either. */}
+        <p className="mb-4 text-xs text-kraken-shadow">
+          Each card counts its tasks — <span className="text-zinc-300">pending</span>{" "}
+          waiting to be dispatched, <span className="text-amber-300">active</span>{" "}
+          with an agent running now,{" "}
+          <span className="text-emerald-300">done</span> finished and gate-passed.
+          Sorted by most recently worked on.
+        </p>
 
         {error ? (
           <p
@@ -84,16 +110,32 @@ export default function Dashboard() {
             </p>
           </div>
         ) : (
-          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.map((project) => (
-              <li key={project.id}>
-                <ProjectCard
-                  project={project}
-                  taskCounts={project.task_counts}
-                />
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {(showAllProjects
+                ? projects
+                : projects.slice(0, VISIBLE_PROJECTS)
+              ).map((project) => (
+                <li key={project.id}>
+                  <ProjectCard
+                    project={project}
+                    taskCounts={project.task_counts}
+                  />
+                </li>
+              ))}
+            </ul>
+            {projects.length > VISIBLE_PROJECTS ? (
+              <button
+                type="button"
+                onClick={() => setShowAllProjects((prev) => !prev)}
+                className="tap mt-3 w-full rounded-md border border-kraken-boundless px-3 text-sm text-kraken-ice transition hover:bg-kraken-boundless/30"
+              >
+                {showAllProjects
+                  ? "Show fewer"
+                  : `Show all ${projects.length} projects`}
+              </button>
+            ) : null}
+          </>
         )}
       </section>
 

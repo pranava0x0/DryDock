@@ -1,5 +1,5 @@
-import { promises as fs, createReadStream } from "node:fs";
-import { join } from "node:path";
+import { promises as fs, createReadStream, type Dirent } from "node:fs";
+import { basename, join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { mayContainRecentTurns, widestCutoff } from "./usage-mtime";
@@ -7,11 +7,12 @@ import { mayContainRecentTurns, widestCutoff } from "./usage-mtime";
 /**
  * Claude Code session-log reader.
  *
- * Walks `~/.claude/projects/*\/*.jsonl` and aggregates the `message.usage`
- * blocks emitted by Claude Code on every assistant turn. Each line is a
- * full JSON event; we only care about assistant messages with a `usage`
- * field. Everything else (user messages, queue ops, system events, tool
- * results) is skipped.
+ * Walks every `.jsonl` under `~/.claude/projects/` — including the nested
+ * `<sessionId>/subagents/agent-*.jsonl` logs — and aggregates the
+ * `message.usage` blocks emitted by Claude Code on every assistant turn.
+ * Each line is a full JSON event; we only care about assistant messages
+ * with a `usage` field. Everything else (user messages, queue ops, system
+ * events, tool results) is skipped.
  *
  * Why this works as a "Claude budget" signal: Claude Code subscriptions
  * (Pro/Max) have no public usage API, but Code itself logs every turn's
@@ -111,22 +112,16 @@ export async function readClaudeUsage(
     }
     if (!stat.isDirectory()) continue;
 
-    let files: string[] = [];
-    try {
-      files = await fs.readdir(subPath);
-    } catch {
-      continue;
-    }
-
-    for (const f of files) {
-      if (!f.endsWith(".jsonl")) continue;
-      const filePath = join(subPath, f);
+    for (const filePath of await collectSessionLogs(subPath)) {
       // Cheap stat gate before the expensive streaming read.
       if (!(await mayContainRecentTurns(filePath, skipBefore))) continue;
       filesScanned += 1;
-      const sessionId = f.replace(/\.jsonl$/, "");
+      // Only a fallback: every record carries its own `sessionId`, and for a
+      // subagent log that is the *parent* session — which is what we want to
+      // count, since a subagent isn't a separate session.
+      const fallbackSessionId = basename(filePath).replace(/\.jsonl$/, "");
 
-      await aggregateFile(filePath, sessionId, {
+      await aggregateFile(filePath, fallbackSessionId, {
         fiveHourCutoff,
         weeklyCutoff,
         monthlyCutoff,
@@ -148,6 +143,36 @@ export async function readClaudeUsage(
   monthly.sessions = monthlySessions.size;
 
   return finalize(fiveHour, weekly, monthly, latestTurnAt, filesScanned);
+}
+
+/**
+ * Every `.jsonl` under a project directory, at any depth.
+ *
+ * Subagent transcripts live *below* the main session log, at
+ * `<project>/<sessionId>/subagents/agent-*.jsonl` (and one level deeper
+ * again when a subagent spawns its own). A single-level `readdir` of the
+ * project directory therefore misses all of them. On the machine where this
+ * was found that was 636 of 857 files — and 54% of the week's input tokens
+ * — absent from the totals with nothing on screen to suggest a gap.
+ *
+ * Subagent turns bill to the same account and count against the same
+ * rate-limit window as the main loop, so excluding them doesn't make the
+ * number conservative, it makes it wrong.
+ */
+async function collectSessionLogs(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await collectSessionLogs(path)));
+    else if (entry.name.endsWith(".jsonl")) out.push(path);
+  }
+  return out;
 }
 
 function finalize(
@@ -182,7 +207,7 @@ interface AggregateContext {
 
 async function aggregateFile(
   filePath: string,
-  sessionId: string,
+  fallbackSessionId: string,
   ctx: AggregateContext,
 ): Promise<void> {
   // Streaming line-by-line — some jsonl files are >1MB; loading them
@@ -213,6 +238,14 @@ async function aggregateFile(
 
       const turnTime = new Date(ts);
       if (Number.isNaN(turnTime.getTime())) continue;
+
+      // A subagent log's records carry the parent session's id, so session
+      // counts stay honest (one session, however many agents it spawned)
+      // while the agents' tokens still land in the totals.
+      const sessionId =
+        typeof parsed.sessionId === "string" && parsed.sessionId.length > 0
+          ? parsed.sessionId
+          : fallbackSessionId;
 
       const turn = {
         inputTokens: numOr0(usage.input_tokens),
