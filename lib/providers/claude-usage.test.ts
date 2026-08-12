@@ -57,6 +57,42 @@ function writeSession(projectName: string, sessionId: string, turns: TurnFixture
   writeFileSync(join(projectDir, `${sessionId}.jsonl`), lines.join("\n") + "\n");
 }
 
+/**
+ * A subagent transcript, at the real on-disk location:
+ * `<project>/<sessionId>/subagents/<agentId>.jsonl`. Records carry the
+ * *parent* session's id plus `isSidechain: true`, exactly as Claude Code
+ * writes them.
+ */
+function writeSubagent(
+  projectName: string,
+  parentSessionId: string,
+  agentId: string,
+  turns: TurnFixture[],
+): void {
+  const dir = join(root, projectName, parentSessionId, "subagents");
+  mkdirSync(dir, { recursive: true });
+  const lines = turns.map((t) =>
+    JSON.stringify({
+      type: t.type ?? "assistant",
+      timestamp: t.timestamp,
+      sessionId: parentSessionId,
+      isSidechain: true,
+      message: {
+        model: "claude-opus-4-7",
+        role: "assistant",
+        type: "message",
+        usage: {
+          input_tokens: t.input ?? 0,
+          output_tokens: t.output ?? 0,
+          cache_creation_input_tokens: t.cacheCreate ?? 0,
+          cache_read_input_tokens: t.cacheRead ?? 0,
+        },
+      },
+    }),
+  );
+  writeFileSync(join(dir, `${agentId}.jsonl`), lines.join("\n") + "\n");
+}
+
 describe("readClaudeUsage", () => {
   it("returns zeros for a missing root dir (fresh-install case)", async () => {
     const report = await readClaudeUsage(join(root, "does-not-exist"), FIXED_NOW);
@@ -232,5 +268,86 @@ describe("readClaudeUsage", () => {
     expect(report.weekly.inputTokens).toBe(3);
     expect(report.weekly.sessions).toBe(2);
     expect(report.filesScanned).toBe(2);
+  });
+
+  /**
+   * Subagent transcripts are nested below the session log, at
+   * `<project>/<sessionId>/subagents/agent-*.jsonl`. A single-level readdir
+   * of the project directory misses every one of them — the bug this covers
+   * hid 636 of 857 real files and 54% of a week's input tokens behind
+   * numbers that looked perfectly plausible.
+   */
+  describe("subagent (sidechain) logs", () => {
+    it("counts tokens from nested subagents/ logs", async () => {
+      writeSession("-Users-foo-ProjA", "sess1", [
+        { timestamp: "2026-05-15T10:00:00.000Z", input: 10, output: 100 },
+      ]);
+      writeSubagent("-Users-foo-ProjA", "sess1", "agent-abc", [
+        { timestamp: "2026-05-15T10:05:00.000Z", input: 7, output: 70 },
+      ]);
+
+      const report = await readClaudeUsage(root, FIXED_NOW);
+      expect(report.weekly.inputTokens).toBe(17);
+      expect(report.weekly.outputTokens).toBe(170);
+      expect(report.weekly.assistantTurns).toBe(2);
+      expect(report.filesScanned).toBe(2);
+    });
+
+    it("attributes subagent turns to the parent session, not a new one", async () => {
+      writeSession("-Users-foo-ProjA", "sess1", [
+        { timestamp: "2026-05-15T10:00:00.000Z", input: 1 },
+      ]);
+      writeSubagent("-Users-foo-ProjA", "sess1", "agent-abc", [
+        { timestamp: "2026-05-15T10:01:00.000Z", input: 1 },
+      ]);
+      writeSubagent("-Users-foo-ProjA", "sess1", "agent-def", [
+        { timestamp: "2026-05-15T10:02:00.000Z", input: 1 },
+      ]);
+
+      const report = await readClaudeUsage(root, FIXED_NOW);
+      // Three files, three turns — but one session. Spawning agents does not
+      // multiply your session count.
+      expect(report.weekly.assistantTurns).toBe(3);
+      expect(report.weekly.sessions).toBe(1);
+    });
+
+    it("finds subagent logs nested more than one level deep", async () => {
+      // A subagent that spawns its own agents nests again.
+      writeSession("-Users-foo-ProjA", "sess1", [
+        { timestamp: "2026-05-15T10:00:00.000Z", input: 1 },
+      ]);
+      const deep = join(
+        root,
+        "-Users-foo-ProjA",
+        "sess1",
+        "subagents",
+        "agent-abc",
+        "subagents",
+      );
+      mkdirSync(deep, { recursive: true });
+      writeFileSync(
+        join(deep, "agent-nested.jsonl"),
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-05-15T10:03:00.000Z",
+          sessionId: "sess1",
+          isSidechain: true,
+          message: {
+            role: "assistant",
+            type: "message",
+            usage: {
+              input_tokens: 5,
+              output_tokens: 0,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            },
+          },
+        }) + "\n",
+      );
+
+      const report = await readClaudeUsage(root, FIXED_NOW);
+      expect(report.weekly.inputTokens).toBe(6);
+      expect(report.weekly.sessions).toBe(1);
+    });
   });
 });
