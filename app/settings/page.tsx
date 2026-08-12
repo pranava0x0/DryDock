@@ -94,6 +94,12 @@ interface ProviderBudgetsResponse {
   codex: CodexUsageReport | { error: string };
   google: GeminiUsageReport | { error: string };
   cachedAt: string;
+  /**
+   * The server served a cached payload and is re-reading the logs behind it.
+   * Worth showing: the scan takes seconds, so "these numbers are a moment
+   * old and moving" is materially different from "these numbers are live".
+   */
+  refreshing?: boolean;
 }
 
 // Intl compact-notation formatter for "2.4B" / "115M" / "11.1M" style.
@@ -113,6 +119,59 @@ function formatLatestTurn(iso: string | null): string {
   if (elapsedMs < 3_600_000) return `${Math.floor(elapsedMs / 60_000)}m ago`;
   if (elapsedMs < 86_400_000) return `${Math.floor(elapsedMs / 3_600_000)}h ago`;
   return `${Math.floor(elapsedMs / 86_400_000)}d ago`;
+}
+
+/** "as of 21:47:02" — clock time, since this is a read timestamp, not an age. */
+function formatAsOf(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "unknown";
+  return at.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+/**
+ * When the numbers were read, and whether a re-read is running.
+ *
+ * Distinct from each card's "last turn Nm ago", which is the freshness of the
+ * underlying *logs*. This is the freshness of our *read* of them — the two
+ * come apart precisely because the scan is slow enough to be served stale.
+ */
+function FreshnessLine({
+  budgets,
+  loading,
+}: {
+  budgets: ProviderBudgetsResponse | null;
+  loading: boolean;
+}) {
+  if (loading && !budgets) {
+    return (
+      <p className="mt-1 text-xs text-kraken-shadow">
+        <span className="dd-pulse">Reading local logs…</span>
+      </p>
+    );
+  }
+  if (!budgets) return null;
+
+  return (
+    <p className="mt-1 flex items-center gap-1.5 text-xs text-kraken-shadow">
+      <span>as of {formatAsOf(budgets.cachedAt)}</span>
+      {budgets.refreshing ? (
+        <>
+          {/* Two-frame opacity pulse on a 5px dot: no layout, no repaint of
+              anything but the dot, and it stops the moment the refresh lands.
+              `prefers-reduced-motion` pins it solid — see globals.css. */}
+          <span
+            aria-hidden="true"
+            className="dd-pulse inline-block h-[5px] w-[5px] rounded-full bg-kraken-ice"
+          />
+          <span className="dd-pulse">refreshing</span>
+        </>
+      ) : null}
+    </p>
+  );
 }
 
 function ClaudeBudgetCard({
@@ -978,19 +1037,6 @@ export default function SettingsPage() {
               <span className="mt-1 block text-xs text-kraken-shadow">
                 Tasks beyond the cap queue and start as slots free up.
               </span>
-              <InlineDisclosure label="What does one run cost me?">
-                <p>
-                  Each run is one CLI subprocess in its own git worktree —
-                  its own checkout, its own branch, its own token spend.
-                  Three concurrent agents are three sets of tokens burning
-                  at once.
-                </p>
-                <p>
-                  The cap is enforced in the database, not in this button, so
-                  two taps can&apos;t both squeeze past it. Queued tasks
-                  survive a restart.
-                </p>
-              </InlineDisclosure>
               <input
                 type="number"
                 min={1}
@@ -1018,6 +1064,7 @@ export default function SettingsPage() {
             <p className="mt-1 text-xs text-kraken-shadow">
               Read from local CLI logs — nothing leaves this Mac.
             </p>
+            <FreshnessLine budgets={budgets} loading={budgetsLoading} />
             <InlineDisclosure label="Where do these numbers come from?">
               <p>
                 Claude and Codex log every turn&apos;s token counts locally as
