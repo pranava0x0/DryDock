@@ -261,6 +261,51 @@ Three lines of defense, in order:
 
 ---
 
+### Learned patterns (2026-08-12, perf + accuracy run)
+
+- **Measure every route cold *and* warm, then subtract the compile.** One pass over all
+  eight settings-adjacent endpoints found the whole problem in two of them:
+  `/api/provider-budgets` 24.6 s cold / 27 ms warm, `/api/flow` 19.7 s cold / 20 ms warm,
+  everything else under 0.7 s. Don't stop at the cold number — `grep Compiled` in
+  `preview_logs` separates Next's JIT from real work, and it flips the verdict:
+  `/api/usage`'s 3.3 s was 3.1 s of compilation (nothing to fix), while `/api/flow`
+  compiles in 393 ms, so its 19.3 s is the handler. Loop for P-02:
+
+  ```bash
+  for ep in /api/projects /api/provider-budgets /api/flow /api/overview; do
+    c=$(curl -s -o /dev/null -w "%{time_total}" --max-time 300 "http://localhost:3000$ep")
+    w=$(curl -s -o /dev/null -w "%{time_total}" --max-time 300 "http://localhost:3000$ep")
+    echo "$ep cold=${c}s warm=${w}s"
+  done
+  ```
+
+- **A short TTL in front of a slow read is a perf bug, not a mitigation.** Add to P-02:
+  for any cached endpoint, check TTL against measured cold cost. A 60 s TTL over a 25 s
+  read means one request a minute pays 25 s — and if the page polls, that's every user.
+  Stale-while-revalidate (`cachedAt` + `refreshing` in the payload) is the fix.
+- **The preview pane collapses to `0x0` after navigation or reload — pin the viewport
+  before any layout assertion.** Two overflow measurements were pure garbage before the
+  zero was spotted: with `clientWidth: 0` every element's rect "overflows" and the
+  no-horizontal-scroll check fails for nothing. Always `preview_resize` first, assert
+  `document.documentElement.clientWidth > 0`, then measure — and re-pin after each reload.
+- **The document-level no-horizontal-scroll check misses a clipped flex row.** Step 4's
+  `scrollWidth === clientWidth` assertion passed while the header nav's last tab sat
+  behind the budget pill, unreachable. Add a header check: the nav's own
+  `scrollWidth > clientWidth`, and the last tab's rect inside the nav's rect after
+  `nav.scrollLeft = 9999`. Re-run it whenever a nav item is added (see design.md).
+- **Don't debug a hot-reloaded page.** A component wedged in its loading state through 12
+  Fast Refresh cycles is indistinguishable from a real fetch hang. Check
+  `read_console_messages` for the `[Fast Refresh] rebuilding` count and do a hard reload
+  before investigating.
+- **Assert that lazy is actually lazy, via the network log, not the rendering.** For any
+  on-demand panel: confirm the endpoint is *absent* from `read_network_requests` on mount,
+  then present after the interaction. `/api/projects/[id]/backlog` was verified this way —
+  mount fires only `/api/projects/<id>` + `/api/tasks?projectId=`, which is also the P-03
+  redundancy contract, so the two checks share one trace.
+- **Ranking and top-N surfaces need a real-data pass, not fixtures.** The opener's TODO
+  list looked correct in tests and was useless live: three of six rows were 2014
+  coursework PRs, 4,302 days stale. Only the real corpus shows that.
+
 ## What success looks like
 
 A clean UAT run completes in 4–6 minutes and prints:
