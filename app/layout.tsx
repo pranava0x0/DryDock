@@ -83,8 +83,17 @@ export default function RootLayout({
               </span>
               <span className="hidden sm:inline">DryDock</span>
             </a>
-            <nav className="flex min-w-0 items-center gap-0.5 sm:gap-2">
+            {/* Scrollable below `sm`. Four tabs plus the anchor and the budget
+                pill exceed 375px, and the flex row was silently clipping the
+                last one — Analytics sat behind the pill, unreachable, with no
+                scrollbar and no ellipsis to suggest anything was missing. */}
+            <nav className="no-scrollbar flex min-w-0 items-center gap-0.5 overflow-x-auto sm:gap-2">
               {[
+                // Projects is the dashboard at `/`. It was reachable only via
+                // the wordmark, which reads as a logo rather than as a nav
+                // target — so the app's main screen was the one screen with
+                // no tab.
+                { href: "/", label: "Projects" },
                 { href: "/backlog", label: "Backlog" },
                 { href: "/settings", label: "Budget" },
                 { href: "/analytics", label: "Analytics" },

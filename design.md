@@ -126,6 +126,10 @@ Don't bloat desktop controls just because the mobile-first rule exists, and don'
 
 Mobile-first with Tailwind's default scale:
 - Default (mobile): single column, FAB visible, modal slides up from bottom. The header drops the "DryDock" wordmark and keeps the ⚓ — the app's name is already on the home-screen icon and the tab title, and reclaiming that width is what lets the nav have 44px targets *and* the budget pill fit in 375px.
+
+**The header nav scrolls below `sm`, and that is load-bearing.** ⚓ + four tabs + the budget pill exceed 375px. Before this was fixed (2026-08-12), the flex row silently clipped its last child: adding a "Projects" tab pushed "Analytics" behind the pill — unreachable, with no scrollbar and no ellipsis — while `document.scrollWidth === document.clientWidth` still reported no horizontal overflow, so the usual assertion passed. The nav now carries `overflow-x-auto` plus `.no-scrollbar` (a permanent scrollbar across a 44px header on a phone costs more than it explains).
+
+Two rules follow. **Adding a fifth nav tab requires re-measuring at 375px** — check the *nav's* `scrollWidth > clientWidth` and that the last tab's rect falls inside the nav's, not the document's. And **never assert layout in a viewport reporting `clientWidth: 0`**; a hidden or just-navigated preview pane collapses to `0x0`, which makes every element "overflow" and every check fail. Pin the viewport, then measure, and re-pin after each reload.
 - `sm` (640px): modals center; the wordmark returns.
 - `md` (768px): Analytics → Usage and Flow cards go 2-up.
 - `lg` (1024px): project grid 3-up; `/backlog` grows a **sticky right rail** for the inbox and GitHub work, leaving the reading column to the list. Below `lg` those stack *above* the list — on a phone, "what needs deciding" outranks browsing.
