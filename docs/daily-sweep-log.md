@@ -1028,11 +1028,19 @@ and both blind spots are ordinary histories:
 | patch-id replay | ✗ blind | ✓ sees |
 | merged-tree | ✓ sees | ✗ blind |
 
-Neither can turn genuinely outstanding work into "stale": extra commits change
-the whole-branch patch-id, and a merge that brings them in necessarily changes
-the tree.
+**A claim written here two hours ago was wrong**, and is worth leaving visible
+rather than quietly editing: this entry asserted that neither test could turn
+genuinely outstanding work into `stale`. `git patch-id` **ignores whitespace by
+default**, so a branch adding `foobar` matched a main commit adding `foo bar` —
+different content, conflicting merge, different trees, reported `stale 1`.
 
-It took **five** wrong versions to get there, and all of them are worth
+That is the one direction this script must never fail in. `unmerged` that
+should be `stale` is a nuisance line in a sweep; `stale` that should be
+`unmerged` means the sweep goes quiet about real work and never mentions it
+again. `git patch-id --verbatim` (git 2.39+, probed, `git cherry` as fallback)
+fixes it.
+
+It took **six** wrong versions to get there, and all of them are worth
 recording, because they failed the same way: each was checked only against the
 history that happened to be on this disk that morning.
 
@@ -1100,6 +1108,13 @@ So: both tests, either one sufficient, for the reason tabulated above. What
 finally worked was not a better single primitive but noticing the two failures
 were complements.
 
+**Wrong version 6** was the whitespace one above, plus its sibling: `git diff
+--quiet` returns **128** on a missing tree object, and the code read anything
+non-zero as "they differ" — so a partial read was reported as real work. Exit
+status 1 is now distinguished from everything above it, which propagates as
+`unreadable`. Both refs and the commit count resolve in that case, so the
+up-front ref checks don't catch it.
+
 ### The quieter bug underneath all of it
 
 Separately, Codex flagged that `rev-list --count "$base..$branch" || echo 0`
@@ -1141,6 +1156,8 @@ builds each git topology from scratch in a temp dir — 8 cases, ~2s:
 | squash-merged, **main revised that file afterwards** | `stale 1` |
 | squash-merged, **main deleted that file afterwards** | `stale 1` |
 | work added *after* the squash | `unmerged 2` |
+| **whitespace-equivalent patch on main** | `unmerged 1` |
+| **missing tree object** | `unreadable` |
 | branch conflicts with main | `unmerged 1` |
 | no common ancestor | `unmerged` |
 | unreadable branch / unreadable base | `unreadable` |
@@ -1154,11 +1171,12 @@ broken version was restored and re-run:
 | v3, patch-id only | ✗ *"stays stale when the branch merged main back"* |
 | v4, + merge-base guard | ✗ *"same region edited first"*, ✗ both `unreadable` cases |
 | v5, merged-tree only | ✗ both *"main revised/deleted that file afterwards"* |
-| shipped | ✓ 13 pass |
+| v6, `git cherry` | ✗ *"whitespace-equivalent patch"*, ✗ *"missing tree object"* |
+| shipped | ✓ 15 pass |
 
 Each wrong version fails exactly the cases written for it — which is the only
 reason to believe the shipped one is better rather than merely newer. Full
-suite **738 passed / 59 files**.
+suite **740 passed / 59 files**.
 
 The branch still appears in FULL STATE — a stale ref is real, and per the
 standing rule nothing gets deleted without the user — but it now says what it

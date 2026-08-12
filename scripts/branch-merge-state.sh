@@ -53,33 +53,55 @@ fi
 # is not belt-and-braces: each one is blind exactly where the other sees, and
 # both blind spots are ordinary histories that showed up in review.
 #
-#   patch-id replay   — blind when base edited the same region *before* the
-#                       squash (differing context, differing patch-id)
-#   merged-tree       — blind when base edited the branch's paths *after* the
-#                       squash (the merge then changes the tree, or conflicts)
-#
-# Neither can turn genuinely outstanding work into "stale": extra commits on
-# the branch change the whole-branch patch-id, and a merge that adds them
-# necessarily changes the tree.
+#   patch-id match  — blind when base edited the same region *before* the
+#                     squash (differing context, differing patch-id)
+#   merged-tree     — blind when base edited the branch's paths *after* the
+#                     squash (the merge then changes the tree, or conflicts)
 
 # 1. Contributes nothing over the fork point — an empty branch, or one that
 #    merged base back in after being squashed, which moves the merge base onto
-#    the squash commit. That reaches the replay below as an *empty* commit,
-#    which `git cherry` correctly reports as `+`, so this comes first.
-if g diff --quiet "$mb" "$branch" 2>/dev/null; then
-  echo "stale $ahead"
-  exit 0
-fi
+#    the squash commit. That reaches the patch-id test below as an *empty*
+#    diff, which matches nothing, so this comes first.
+#
+#    Exit status 1 is "they differ"; anything higher is a failed read (a
+#    missing or corrupt tree object still passes the ref checks above). Those
+#    must not fall through as "differ" and end up reported as real work.
+g diff --quiet "$mb" "$branch" 2>/dev/null
+case $? in
+  0) echo "stale $ahead"; exit 0 ;;
+  1) ;;
+  *) echo "unreadable"; exit 0 ;;
+esac
 
-# 2. Replay the branch as one commit on its merge base — the shape a squash
-#    merge produces — and look for that patch-id anywhere in base's *history*.
+# 2. Take the branch's whole diff since the fork point — the same patch a
+#    squash merge produces — and look for it anywhere in base's *history*.
 #    Being historical is what makes this survive base moving on afterwards.
-#    `git cherry base branch` does not work here: a squash collapses N commits
-#    into one, so none of the originals match.
-sq=$(g commit-tree "$branch^{tree}" -p "$mb" -m squash-probe 2>/dev/null || true)
-if [ -n "$sq" ] && g cherry "$base" "$sq" 2>/dev/null | grep -q '^-'; then
-  echo "stale $ahead"
-  exit 0
+#
+#    --verbatim matters: `git patch-id` normally ignores whitespace, so a base
+#    commit adding `foo bar` matches a branch adding `foobar` and genuinely
+#    unmerged work would be reported as shipped. That is the one direction this
+#    script must never fail in, since the sweep then never mentions the branch
+#    again. --verbatim needs git 2.39+, so it is probed; without it, fall back
+#    to `git cherry`, which has the whitespace blind spot but is still better
+#    than reporting every squash-merged branch as outstanding.
+if printf '' | g patch-id --verbatim >/dev/null 2>&1; then
+  pid () { g patch-id --verbatim 2>/dev/null | awk '{print $1}'; }
+  target=$(g diff "$mb" "$branch" 2>/dev/null | pid)
+  # One `git log -p` piped into one patch-id, rather than two processes per
+  # commit. Bounded: a branch forked thousands of commits back is not worth
+  # a full-history scan, and the merged-tree test below still applies.
+  if [ -n "$target" ] &&
+     g log -p --no-merges -n "${SWEEP_PATCH_ID_SCAN:-500}" "$mb..$base" 2>/dev/null |
+       g patch-id --verbatim 2>/dev/null | grep -q "^$target "; then
+    echo "stale $ahead"
+    exit 0
+  fi
+else
+  sq=$(g commit-tree "$branch^{tree}" -p "$mb" -m squash-probe 2>/dev/null || true)
+  if [ -n "$sq" ] && g cherry "$base" "$sq" 2>/dev/null | grep -q '^-'; then
+    echo "stale $ahead"
+    exit 0
+  fi
 fi
 
 # 3. Would merging actually change base? Trees compare content rather than

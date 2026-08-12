@@ -212,6 +212,38 @@ describe("branch-merge-state.sh", () => {
     expect(state(repo, "feat")).toBe("stale 1");
   });
 
+  /**
+   * `git patch-id` ignores whitespace by default, so `git cherry` called a
+   * branch adding `foobar` equivalent to a main commit adding `foo bar` — and
+   * the helper reported real, conflicting work as shipped. That is the one
+   * direction this script must never fail in: `stale` means the sweep stops
+   * mentioning the branch, so hidden work stays hidden. Hence --verbatim.
+   */
+  it("does not treat a whitespace-equivalent patch on main as incorporation", () => {
+    const repo = newRepo();
+    git(repo, "checkout", "-q", "-b", "feat");
+    commit(repo, "base.txt", "base\nfoobar\n", "branch adds foobar");
+    git(repo, "checkout", "-q", "main");
+    commit(repo, "base.txt", "base\nfoo bar\n", "main adds foo bar");
+    expect(state(repo, "feat")).toBe("unmerged 1");
+  });
+
+  /**
+   * Both refs and the commit count resolve; only a tree object is gone. The
+   * `git diff --quiet` exit status is then 128, and treating that like an
+   * ordinary "they differ" (1) reported a partial read as real work.
+   */
+  it("reports unreadable when a tree object is missing", () => {
+    const repo = newRepo();
+    git(repo, "checkout", "-q", "-b", "feat");
+    commit(repo, "a.txt", "work\n", "w1");
+    const tree = git(repo, "rev-parse", "feat^{tree}");
+    // Back to main *first*: once the tree is gone, checking it out fails too.
+    git(repo, "checkout", "-q", "main");
+    rmSync(join(repo, ".git", "objects", tree.slice(0, 2), tree.slice(2)), { force: true });
+    expect(state(repo, "feat")).toBe("unreadable");
+  });
+
   it("reports unmerged when the branch would conflict with main", () => {
     const repo = newRepo();
     git(repo, "checkout", "-q", "-b", "feat");
