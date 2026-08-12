@@ -235,13 +235,23 @@ if [ -d "$PROJECTS_ROOT/DryDock/.git" ]; then
     [ "$n" = "0" ] && continue
     # A squash-merged PR leaves its local branch with commits main has never
     # seen by SHA, while the *content* is already in main. Counting commits
-    # alone reports that as unmerged work every time a PR lands. Compare trees
-    # instead: no diff against main means there is nothing here to merge, which
-    # in practice is a squash-merged PR whose local ref outlived it.
-    # --quiet for the exit code, not the output: a git failure exits >1 and
-    # falls through to the commit count, where an empty stdout would have
-    # silently read as "merged".
-    if git -C "$PROJECTS_ROOT/DryDock" diff --quiet main "$b" 2>/dev/null; then
+    # alone reports that as unmerged work every time a PR lands.
+    #
+    # Ask whether the branch's content was incorporated into main's *history*,
+    # not whether it equals main's current tip — main advances, and a tip
+    # comparison flips back to a false positive on the next unrelated commit.
+    # Replay the branch as a single commit on its merge base (the same shape a
+    # squash merge produces) and let `git cherry` look for that patch-id
+    # anywhere in main. Verified to survive main moving ahead; `git cherry`
+    # alone does not work here, since a squash collapses N commits into one and
+    # none of the original patch-ids match.
+    #
+    # Exit codes, not output: a git failure leaves $sq empty and falls through
+    # to the commit count below, rather than reading as "merged".
+    mb=$(git -C "$PROJECTS_ROOT/DryDock" merge-base main "$b" 2>/dev/null || true)
+    sq=""
+    [ -n "$mb" ] && sq=$(git -C "$PROJECTS_ROOT/DryDock" commit-tree "$b^{tree}" -p "$mb" -m squash-probe 2>/dev/null || true)
+    if [ -n "$sq" ] && git -C "$PROJECTS_ROOT/DryDock" cherry main "$sq" 2>/dev/null | grep -q '^-'; then
       emit "branch:$b:merged" "BRANCH DryDock/$b — squash-merged into main, local ref stale"
       continue
     fi

@@ -1012,20 +1012,47 @@ Compare trees, not commit counts, and report the two states differently
 ([scripts/daily-sweep.sh](../scripts/daily-sweep.sh)):
 
 ```sh
-if git -C "$PROJECTS_ROOT/DryDock" diff --quiet main "$b" 2>/dev/null; then
+mb=$(git … merge-base main "$b" 2>/dev/null || true)
+sq=""
+[ -n "$mb" ] && sq=$(git … commit-tree "$b^{tree}" -p "$mb" -m squash-probe 2>/dev/null || true)
+if [ -n "$sq" ] && git … cherry main "$sq" 2>/dev/null | grep -q '^-'; then
   emit "branch:$b:merged" "BRANCH DryDock/$b — squash-merged into main, local ref stale"
   continue
 fi
 ```
 
-`--quiet` is there for the exit code, not the quiet. The first version of this
-fix tested `[ -z "$(git diff --stat …)" ]`, which self-review caught as an
-instance of the bug class this repo already has a name for: if the `git diff`
-*fails*, stdout is empty, empty reads as "no differences", and a branch nobody
-could compare gets labelled merged. The unhappy path was indistinguishable from
-the happy one. Exit codes separate them — `0` merged, `1` real work, `128` a
-git failure that falls through to the commit count rather than swallowing it.
-Checked all three on the real refs: `0` / `1` / `128` respectively.
+Replay the branch as a single commit on its merge base — the same shape a
+squash merge produces — and let `git cherry` look for that patch-id anywhere in
+main's history. `git cherry` on the branch directly does **not** work: a squash
+collapses N commits into one, so none of the ten original patch-ids appear in
+main.
+
+It took two wrong versions to get there, and both are worth recording.
+
+**Wrong version 1, caught by self-review:** `[ -z "$(git diff --stat main "$b")" ]`.
+A *failed* `git diff` produces empty stdout, empty read as "no differences",
+and a branch nobody could compare would have been labelled merged — the
+"failure that looks like success" shape, inside the fix for a false positive.
+
+**Wrong version 2, caught by Codex on the PR:** comparing trees at the tips at
+all. The comparison only held because #37 was the last thing merged, so the
+branch tree happened to equal main's tree. *Any* later commit on main makes the
+diff nonempty, the branch falls back to the numeric report, and the fingerprint
+flips from `merged` to a commit count — recreating the exact false positive
+this change exists to remove. Merging **this PR** would have been the commit
+that broke it.
+
+That was checked rather than believed, in a throwaway clone, adding one
+unrelated commit to main between two probes:
+
+| | today's main | after one unrelated commit |
+|---|---|---|
+| tip comparison (v2) | merged | **counts as unmerged** |
+| patch-id replay (shipped) | merged | merged |
+
+And the other direction, so the category isn't just being suppressed: the
+shipped check reports this run's own `sweep/2026-08-12` branch as genuinely
+unmerged, correctly, throughout.
 
 The branch still appears in FULL STATE — a stale ref is real, and per the
 standing rule nothing gets deleted without the user — but it now says what it
@@ -1093,3 +1120,9 @@ reaches for the launch config.
 - The general shape worth carrying past this repo: **a count of commits is not
   a measure of unmerged work under squash merges.** The routine's own merge
   strategy was generating its own findings.
+- And the sharper one, from the two failed attempts: **a fix for a
+  false positive needs testing against a moved world, not the world that
+  produced the false positive.** Both wrong versions passed on today's repo.
+  The tip comparison only worked because the merge being detected happened to
+  be the most recent one — a condition that expires on the next commit, which
+  was this PR. Advance the state artificially and re-probe.
