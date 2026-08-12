@@ -3,6 +3,7 @@ import { createProject, listProjects } from "@/lib/db/projects";
 import { taskCountsByProject } from "@/lib/db/tasks";
 import { isProviderName } from "@/lib/providers";
 import { isAutonomyLevel, type AutonomyLevel } from "@/lib/providers/types";
+import { lastCommitForPaths } from "@/lib/projects/last-commit";
 import { badRequest, created, ok, serverError } from "@/lib/api/json";
 
 // Force the Node runtime: the DB layer uses better-sqlite3 (native bindings)
@@ -20,7 +21,29 @@ export async function GET(): Promise<Response> {
       ...project,
       task_counts: taskCountsByProject(project.id),
     }));
-    return ok({ projects: withCounts });
+
+    // "Last worked on" comes from git, not from DryDock's own tables: a
+    // project you've been committing to all week can still have zero tasks
+    // here, and sorting by task activity would have put 30 identical
+    // zero-activity projects in an arbitrary order.
+    const commits = await lastCommitForPaths(withCounts.map((p) => p.path));
+    const decorated = withCounts.map((project) => ({
+      ...project,
+      last_commit_at: commits.get(project.path) ?? null,
+    }));
+
+    decorated.sort((a, b) => {
+      // Un-versioned projects have no commit time at all; they sort last
+      // rather than pretending to be ancient or brand new.
+      if (a.last_commit_at === null && b.last_commit_at === null) {
+        return a.name.localeCompare(b.name);
+      }
+      if (a.last_commit_at === null) return 1;
+      if (b.last_commit_at === null) return -1;
+      return b.last_commit_at - a.last_commit_at;
+    });
+
+    return ok({ projects: decorated });
   } catch (err) {
     return serverError((err as Error).message);
   }
