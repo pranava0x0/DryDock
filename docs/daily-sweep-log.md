@@ -1208,9 +1208,36 @@ branch now reads `squash-merged into main, local ref stale`, while this run's
 own `sweep/2026-08-12` branch correctly reads `1 commit(s) not in main`. The
 check distinguishes them rather than suppressing the category.
 
-### Nothing filed, deliberately
+### One task filed, from the review rather than the sweep
 
-`GET /api/backlog` first, as the routine requires — 23 items. The stale branch
+**p60 `iy4rnQRtfHKpNwMBk_ScM` — "Sweep branch classifier: two residual blind
+spots (both-sides edits, missing blobs)"**. Two findings from the last review
+round, filed rather than fixed because both need a design change and this is a
+scheduled run, not a refactor session:
+
+1. **Edits on both sides of the squash.** The "each test is blind exactly where
+   the other sees" table below holds for each topology *alone*, not for their
+   combination. If main edits nearby lines **before** the squash (breaking
+   patch-id context) *and* revises the branch-touched line **after** it (making
+   the merge conflict), both tests are blind at once. The fix direction is to
+   test incorporation against historical *trees* — walk main's commits since
+   the merge base checking `merge-tree(C, branch) == C^{tree}` — which is one
+   merge-tree per commit and needs its cost measured first.
+2. **A missing blob reads as real work.** The preliminary `diff --quiet` can
+   return an ordinary rc=1 from tree-entry OIDs alone while the later full-diff
+   pipeline fails on the absent blob; that status is unchecked, so it falls
+   through to `unmerged` instead of `unreadable`. Both endpoint trees stay
+   intact, so today's tree guards don't catch it.
+
+Filing beats fixing here for the same reason the routine says so: the run had
+already gone seven review rounds deep on a cosmetic false positive, and the
+classifier is now far better than it was, if still not perfect. Both reproduce
+against `2885d53`; the task carries the repro steps.
+
+### Nothing else filed, deliberately
+
+`GET /api/backlog` first, as the routine requires — 23 items. Nothing was filed
+*from the sweep itself*. The stale branch
 is already covered by **p50 `XwA4qnzNtnv3XMBUUqhHm` — "Delete 2 stale local
 branches in DryDock"**, so filing a new row would have been a duplicate of an
 open task.
