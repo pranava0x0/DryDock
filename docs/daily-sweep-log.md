@@ -1012,11 +1012,20 @@ Compare trees, not commit counts, and report the two states differently
 ([scripts/daily-sweep.sh](../scripts/daily-sweep.sh)):
 
 ```sh
-if [ -z "$(git -C "$PROJECTS_ROOT/DryDock" diff --stat main "$b" 2>/dev/null)" ]; then
+if git -C "$PROJECTS_ROOT/DryDock" diff --quiet main "$b" 2>/dev/null; then
   emit "branch:$b:merged" "BRANCH DryDock/$b — squash-merged into main, local ref stale"
   continue
 fi
 ```
+
+`--quiet` is there for the exit code, not the quiet. The first version of this
+fix tested `[ -z "$(git diff --stat …)" ]`, which self-review caught as an
+instance of the bug class this repo already has a name for: if the `git diff`
+*fails*, stdout is empty, empty reads as "no differences", and a branch nobody
+could compare gets labelled merged. The unhappy path was indistinguishable from
+the happy one. Exit codes separate them — `0` merged, `1` real work, `128` a
+git failure that falls through to the commit count rather than swallowing it.
+Checked all three on the real refs: `0` / `1` / `128` respectively.
 
 The branch still appears in FULL STATE — a stale ref is real, and per the
 standing rule nothing gets deleted without the user — but it now says what it
@@ -1025,8 +1034,10 @@ is. The fingerprint keys on `merged` rather than a commit count, so it is
 behind it. It re-surfaces in NEW exactly once tomorrow (the key changed from
 `branch:…:10` to `branch:…:merged`), then goes quiet.
 
-Verified by re-running: the line now reads `squash-merged into main, local ref
-stale`.
+Verified by re-running, and the re-run exercised both paths at once: the merged
+branch now reads `squash-merged into main, local ref stale`, while this run's
+own `sweep/2026-08-12` branch correctly reads `1 commit(s) not in main`. The
+check distinguishes them rather than suppressing the category.
 
 ### Nothing filed, deliberately
 
