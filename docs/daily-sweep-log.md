@@ -975,3 +975,343 @@ sweep read the tree. The concurrency point stands harder than written — the
 count in a DIRTY row is a sample, not a measurement, when the tree is live.
 It baselined at 6, so it will legitimately re-surface tomorrow at whatever
 count it settles on; that is correct behaviour, not a repeat of the drip.
+
+## 2026-08-12 — eighth run
+
+Yesterday's run happened (`8873b49`, PR #35, plus the docs follow-up `09f9d57`
+/ #36), so this is a true 24-hour diff. **One** NEW line, and it was a false
+positive — produced by the sweep's own branch check, two minutes after PR #37
+merged. Zero tasks filed, one script fix.
+
+### The one NEW line, and why it was wrong
+
+```
+BRANCH DryDock/jam/drydock-chrome-launch-skill-f472a9 — 10 commit(s) not in main
+```
+
+Ten commits is a lot of unmerged work to appear overnight, which is what made
+it worth thirty seconds of checking rather than filing. It is PR #37 — *"Fix
+the usage undercount, make the slow reads non-blocking, and open the dashboard
+on real signal"* — **merged at 06:01:34Z**, one minute and forty seconds before
+the sweep read the ref at 06:03.
+
+The branch check counted `git rev-list main..<branch>` and stopped there. A
+squash merge writes one new commit onto main and leaves every original SHA
+unreachable from it, so the count is honestly 10 and completely meaningless:
+`git diff main <branch>` is **empty**. The content shipped; only the ref is
+stale.
+
+This is not a one-off. It fires on *every* squash-merged PR whose local branch
+outlives the merge, which — given this repo squash-merges everything, including
+the PR that closes each of these sweeps — means the routine was set up to
+manufacture a fake finding roughly once per run.
+
+### The script change
+
+Compare trees, not commit counts, and report the two states differently
+([scripts/daily-sweep.sh](../scripts/daily-sweep.sh)):
+
+Two independent tests, and the branch is stale if **either** fires:
+
+```sh
+# historical: was this content ever incorporated into main?
+git cherry main "$(git commit-tree "$b^{tree}" -p "$mb")" | grep -q '^-'
+# present-tense: would merging it change main at all?
+[ "$(git merge-tree --write-tree main "$b")" = "$(git rev-parse main^{tree})" ]
+```
+
+That is not belt-and-braces. **Each is blind exactly where the other sees**,
+and both blind spots are ordinary histories:
+
+| | main edits the same region *before* the squash | main edits the branch's file *after* the squash |
+|---|---|---|
+| patch-id replay | ✗ blind | ✓ sees |
+| merged-tree | ✓ sees | ✗ blind |
+
+**A claim written here two hours ago was wrong**, and is worth leaving visible
+rather than quietly editing: this entry asserted that neither test could turn
+genuinely outstanding work into `stale`. `git patch-id` **ignores whitespace by
+default**, so a branch adding `foobar` matched a main commit adding `foo bar` —
+different content, conflicting merge, different trees, reported `stale 1`.
+
+That is the one direction this script must never fail in. `unmerged` that
+should be `stale` is a nuisance line in a sweep; `stale` that should be
+`unmerged` means the sweep goes quiet about real work and never mentions it
+again. `git patch-id --verbatim` (git 2.39+, probed, `git cherry` as fallback)
+fixes it.
+
+It took **eight** wrong versions to get there, and all of them are worth
+recording, because they failed the same way: each was checked only against the
+history that happened to be on this disk that morning.
+
+**Wrong version 1, caught by self-review:** `[ -z "$(git diff --stat main "$b")" ]`.
+A *failed* `git diff` produces empty stdout, empty read as "no differences",
+and a branch nobody could compare would have been labelled merged — the
+"failure that looks like success" shape, inside the fix for a false positive.
+
+**Wrong version 2, caught by Codex on the PR:** comparing trees at the tips at
+all. The comparison only held because #37 was the last thing merged, so the
+branch tree happened to equal main's tree. *Any* later commit on main makes the
+diff nonempty, the branch falls back to the numeric report, and the fingerprint
+flips from `merged` to a commit count — recreating the exact false positive
+this change exists to remove. Merging **this PR** would have been the commit
+that broke it.
+
+**Wrong version 3, also caught by Codex:** the patch-id replay alone. If a
+squash-merged branch later merges main back in, the merge base moves onto the
+squash commit, so the synthesized probe is an *empty* commit — which `git
+cherry` correctly reports as `+`, no equivalent upstream. Nothing left to
+merge, reported as three commits of work. Fixed by testing merge-base emptiness
+first.
+
+**Wrong version 4, Codex again:** patch-ids at all. If main edits the same
+region *before* the squash, the squash commit's diff is against already-modified
+main while the probe's is against the old fork point — differing context lines,
+differing patch-id, shipped work reported as outstanding.
+
+That one is worth dwelling on, because the first attempt to reproduce it
+**failed and nearly closed the finding as unfounded**. Edits six lines apart in
+the same file returned `stale`, correctly, because the hunks don't share
+context. Only when they were moved to within three lines of each other did it
+break:
+
+```
+merged main: a b c MAIN e BRANCH      <- both edits present, plainly shipped
+helper says: unmerged 1               <- false positive
+```
+
+"I couldn't reproduce it" was one fixture away from being wrong. The reviewer
+said *same file*; the actual precondition is *within each other's diff context*,
+which is a narrower thing that the first fixture missed.
+
+This moved the check onto `git merge-tree --write-tree`, which compares content
+rather than patches. `--write-tree` needs git 2.38+, so it's capability-probed
+(the old three-argument `merge-tree` would silently misread these arguments).
+
+**Wrong version 5, Codex once more — and the one that mattered most.** Deciding
+purely on a merge into main's *current tip* breaks the moment main touches a
+path the branch touched. Merge the stale branch back in and the tree changes,
+or conflicts, so a fully-shipped branch reads as outstanding work:
+
+```
+helper:      unmerged 1
+git cherry:  - 838b7c16…        <- shipped, and the historical test can see it
+```
+
+This is not an exotic history. It happens the first time anyone edits that file
+again — which for a branch like the one that started this whole entry, touching
+`claude-usage.ts` and `page.tsx`, would be days. The fix would have decayed
+silently back into the false positive it was written to remove, and the next
+sweep would have had no way to tell.
+
+So: both tests, either one sufficient, for the reason tabulated above. What
+finally worked was not a better single primitive but noticing the two failures
+were complements.
+
+**Wrong version 6** was the whitespace one above, plus its sibling: `git diff
+--quiet` returns **128** on a missing tree object, and the code read anything
+non-zero as "they differ" — so a partial read was reported as real work. Exit
+status 1 is now distinguished from everything above it, which propagates as
+`unreadable`. Both refs and the commit count resolve in that case, so the
+up-front ref checks don't catch it.
+
+**Wrong version 8, and the most instructive of the set:** the history scan
+above was capped at 500 commits, for speed. That cap made the entire fix
+**decay**. Past 500 commits the squash falls out of the scan, and if main has
+by then touched the branch's paths the merged-tree test is blind too — so a
+long-shipped branch silently returns to being reported as outstanding work.
+This PR's own bug, on a timer, introduced by the PR fixing it. Measured before
+removing it: 505 commits scan in **268ms**, so the cap was buying nothing.
+
+The test for it is the one deliberately slow fixture in the file (~8s, 520
+commits built as a `commit-tree` chain in a single shell). That cost is the
+point: a cheap version using a handful of commits **passed against the capped
+code**, because a 500-commit cap never bites at six commits. A regression test
+that cannot reach the regression is decoration.
+
+### The quieter bug underneath all of it
+
+Separately, Codex flagged that `rev-list --count "$base..$branch" || echo 0`
+turned a *failed* read into the same value as a genuinely empty range — so an
+unreadable ref printed `in-sync` and the sweep skipped the branch entirely.
+
+That is the same shape as the very first wrong version (empty stdout reading as
+"no differences"), reintroduced two commits later in a different disguise, in a
+file whose own comments warn about it. It also survived the first round of
+tests, because the test asserted only that the output didn't contain `stale` —
+and `in-sync` doesn't. **An assertion written as a negation passes for the
+wrong reason.** There is now an explicit `unreadable` state, asserted by
+equality, and the sweep reports it rather than silently skipping.
+
+### The test, which is the actual fix
+
+Three wrong versions in one morning, each passing on the repo in front of it,
+is the argument for [AGENTS.md](../AGENTS.md)'s "add a vitest test for every bug
+fix" — a rule Codex cited at P1 and which this run had quietly skipped on the
+grounds that it was "only shell".
+
+The classification is now its own script,
+[scripts/branch-merge-state.sh](../scripts/branch-merge-state.sh), taking a
+repo path and a branch and printing `in-sync` / `stale <n>` / `unmerged <n>`.
+That extraction is what makes it testable at all: `daily-sweep.sh` makes five
+`gh` calls, so it can't be invoked wholesale from a test.
+
+[lib/sweep/branch-merge-state.test.ts](../lib/sweep/branch-merge-state.test.ts)
+builds each git topology from scratch in a temp dir — 8 cases, ~2s:
+
+| topology | expected |
+|---|---|
+| no commits ahead | `in-sync` |
+| real outstanding work | `unmerged 2` |
+| squash-merged | `stale 2` |
+| squash-merged, **main advanced twice** | `stale 1` |
+| squash-merged, **branch merged main back** | `stale 2` |
+| squash-merged, **main edited the same region first** | `stale 1` |
+| squash-merged, **main revised that file afterwards** | `stale 1` |
+| squash-merged, **main deleted that file afterwards** | `stale 1` |
+| work added *after* the squash | `unmerged 2` |
+| **whitespace-equivalent patch on main** | `unmerged 1` |
+| **missing tree object** (branch side) | `unreadable` |
+| **missing tree object** (main side) | `unreadable` |
+| **squash buried under 500+ later commits** | `stale 1` |
+| branch conflicts with main | `unmerged 1` |
+| no common ancestor | `unmerged` |
+| unreadable branch / unreadable base | `unreadable` |
+
+Then the part that makes them regression tests rather than decoration — each
+broken version was restored and re-run:
+
+| version under test | result |
+|---|---|
+| v2, tip comparison | ✗ *"stays stale after main advances"* |
+| v3, patch-id only | ✗ *"stays stale when the branch merged main back"* |
+| v4, + merge-base guard | ✗ *"same region edited first"*, ✗ both `unreadable` cases |
+| v5, merged-tree only | ✗ both *"main revised/deleted that file afterwards"* |
+| v6, `git cherry` | ✗ *"whitespace-equivalent patch"*, ✗ *"missing tree object"* |
+| v7, branch-side tree guard only | ✗ *"main's tree object is missing"* |
+| v8, 500-commit scan cap | ✗ *"squash buried under 500+ later commits"* |
+| shipped | ✓ 18 pass |
+
+Each wrong version fails exactly the cases written for it — which is the only
+reason to believe the shipped one is better rather than merely newer. Full
+suite **743 passed / 59 files**.
+
+The branch still appears in FULL STATE — a stale ref is real, and per the
+standing rule nothing gets deleted without the user — but it now says what it
+is. The fingerprint keys on `merged` rather than a commit count, so it is
+*state*, not a date, and it will not re-alarm as commits accumulate on main
+behind it. It re-surfaces in NEW exactly once tomorrow (the key changed from
+`branch:…:10` to `branch:…:merged`), then goes quiet.
+
+Verified by re-running, and the re-run exercised both paths at once: the merged
+branch now reads `squash-merged into main, local ref stale`, while this run's
+own `sweep/2026-08-12` branch correctly reads `1 commit(s) not in main`. The
+check distinguishes them rather than suppressing the category.
+
+### One task filed, from the review rather than the sweep
+
+**p60 `iy4rnQRtfHKpNwMBk_ScM` — "Sweep branch classifier: two residual blind
+spots (both-sides edits, missing blobs)"**. Two findings from the last review
+round, filed rather than fixed because both need a design change and this is a
+scheduled run, not a refactor session:
+
+1. **Edits on both sides of the squash.** The "each test is blind exactly where
+   the other sees" table below holds for each topology *alone*, not for their
+   combination. If main edits nearby lines **before** the squash (breaking
+   patch-id context) *and* revises the branch-touched line **after** it (making
+   the merge conflict), both tests are blind at once. The fix direction is to
+   test incorporation against historical *trees* — walk main's commits since
+   the merge base checking `merge-tree(C, branch) == C^{tree}` — which is one
+   merge-tree per commit and needs its cost measured first.
+2. **A missing blob reads as real work.** The preliminary `diff --quiet` can
+   return an ordinary rc=1 from tree-entry OIDs alone while the later full-diff
+   pipeline fails on the absent blob; that status is unchecked, so it falls
+   through to `unmerged` instead of `unreadable`. Both endpoint trees stay
+   intact, so today's tree guards don't catch it.
+
+Filing beats fixing here for the same reason the routine says so: the run had
+already gone seven review rounds deep on a cosmetic false positive, and the
+classifier is now far better than it was, if still not perfect. Both reproduce
+against `2885d53`; the task carries the repro steps.
+
+### Nothing else filed, deliberately
+
+`GET /api/backlog` first, as the routine requires — 23 items. Nothing was filed
+*from the sweep itself*. The stale branch
+is already covered by **p50 `XwA4qnzNtnv3XMBUUqhHm` — "Delete 2 stale local
+branches in DryDock"**, so filing a new row would have been a duplicate of an
+open task.
+
+One correction to that task's own text, recorded rather than acted on: it says
+*2* branches, and there is now exactly **1** — a different one. The two it was
+filed against are gone; `jam/drydock-chrome-launch-skill-f472a9` arrived after
+it. The task is still valid, its count is not. Left for the user, since editing
+someone else's open task mid-sweep is the kind of quiet rewrite this log exists
+to avoid.
+
+Everything else in FULL STATE is carried and already filed: 3 DryDock bot PRs
+(p72), 15 roboticsleadership bot PRs (p62), 8 dirty trees, the two sync rows,
+vibe-coding-security's divergence (p88), 7 no-upstream checkouts, 6 May test
+rows (p68).
+
+### Sync
+
+`pushedItems` **23**, `pulledNew` 0, `pulledUpdated` 0. No filing this run, so
+no second pass and no delta to report.
+
+`mirror.status` read, not assumed: **`disabled`** — "no tracker repo configured
+(Settings → Backlog mirror)". That is now **four consecutive runs** reading
+`disabled` against an open p65 (*"Configure the DryDock backlog GitHub
+mirror"*). Last run said three runs was worth either configuring or closing
+p65; four is that same recommendation with more evidence behind it and still
+nobody to approve it. It is a correct status, not a silent failure — the
+distinction the 07-26 lesson is about — but a field that has never once read
+anything else is not telling the routine anything.
+
+### Environment note
+
+`preview_start` refuses to run in an unattended session ("nobody is present to
+approve the command"), so the dev server came up via a backgrounded
+`npm run dev` instead. Ready in 1.4s, `GET /api/backlog` 200 before the sync
+POST, per the routine's ordering. Worth knowing for any future step here that
+reaches for the launch config.
+
+### For the next run
+
+- Same entry point, read only NEW. Expect **one** line tomorrow: the re-keyed
+  `branch:…:merged` fingerprint spending itself, exactly like the 08-11 sync
+  re-baseline did. If it appears, that is the migration saving, not a finding.
+- If a `BRANCH` line ever shows a commit count again, it is real unmerged work
+  — the tree comparison has already ruled out the squash-merge case.
+- Carried watch-items: p65 having now read `disabled` four runs running; the
+  three personal PRs against p55's threshold; roboticsleadership's bot queue
+  (15 and still climbing, never merging); and p50's branch count being wrong.
+- The general shape worth carrying past this repo: **a count of commits is not
+  a measure of unmerged work under squash merges.** The routine's own merge
+  strategy was generating its own findings.
+- And the sharper one, from the three failed attempts: **a fix for a false
+  positive needs testing against a moved world, not the world that produced the
+  false positive.** All three wrong versions passed on today's repo. The tip
+  comparison only worked because the merge being detected happened to be the
+  most recent one — a condition that expires on the next commit, which was this
+  PR. Build the topology, don't sample the one on disk.
+- **"It's only a shell script" is not an exemption from the test rule.** The
+  cost of the fixture harness was about fifteen minutes; on replay it caught
+  every wrong version, and would have caught them the first time. The rule in
+  AGENTS.md says *every* bug fix, and this run had to be told, by a bot.
+- **A negative assertion passes for the wrong reason.** `not.toContain("stale")`
+  was satisfied by the bug it was meant to catch. Assert the state you want by
+  equality; "didn't do the bad thing" is not "did the right thing".
+- **Failing to reproduce a reviewer's finding is not evidence against it.** This
+  happened *twice*, on different findings, and both were real. The same-region
+  case came back clean because the edits were six lines apart instead of three.
+  The corrupt-base-tree case came back clean because the fixture's main and
+  branch had identical content and therefore **the same tree object** — so
+  deleting "main's tree" deleted the branch's too, and an earlier guard caught
+  it. Both times the finding was one fixture detail away from being dismissed.
+  When a repro comes back clean, suspect the repro first.
+- **Rank a classifier's two error directions before trusting either.** `unmerged`
+  that should be `stale` is a nuisance line in a sweep. `stale` that should be
+  `unmerged` means the sweep goes silent about real work forever. They are not
+  symmetric, and the whitespace bug lived on the silent side while this log was
+  asserting it couldn't happen.

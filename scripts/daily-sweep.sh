@@ -14,6 +14,10 @@
 # Usage:  scripts/daily-sweep.sh [--full] [--no-save]
 set -uo pipefail
 
+# Resolved from this file, not the caller's cwd — the scheduled task and a
+# hand-run from anywhere both have to find the sibling helper.
+SWEEP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Piping this into `head` (or quitting `less` early) closes stdout, and the
 # next echo would kill the script on SIGPIPE — *before* it reaches the state
 # save at the bottom. The run then looks like it completed while silently
@@ -231,8 +235,20 @@ if [ -d "$PROJECTS_ROOT/DryDock/.git" ]; then
   git -C "$PROJECTS_ROOT/DryDock" for-each-ref --format='%(refname:short)' refs/heads |
   while read -r b; do
     [ "$b" = "main" ] && continue
-    n=$(git -C "$PROJECTS_ROOT/DryDock" rev-list --count "main..$b" 2>/dev/null || echo 0)
-    [ "$n" = "0" ] && continue
+    # Classification lives in scripts/branch-merge-state.sh so it can be tested
+    # against fixture git histories (lib/sweep/branch-merge-state.test.ts).
+    read -r state n <<<"$("$SWEEP_DIR/branch-merge-state.sh" "$PROJECTS_ROOT/DryDock" "$b")"
+    [ "$state" = "in-sync" ] && continue
+    if [ "$state" = "unreadable" ]; then
+      # Report it rather than skipping: a ref we cannot classify is not a ref
+      # with nothing in it.
+      emit "branch:$b:unreadable" "BRANCH DryDock/$b — could not be read (git error)"
+      continue
+    fi
+    if [ "$state" = "stale" ]; then
+      emit "branch:$b:merged" "BRANCH DryDock/$b — squash-merged into main, local ref stale"
+      continue
+    fi
     emit "branch:$b:$n" "BRANCH DryDock/$b — $n commit(s) not in main"
   done
 fi
