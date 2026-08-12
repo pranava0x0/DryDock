@@ -233,6 +233,14 @@ if [ -d "$PROJECTS_ROOT/DryDock/.git" ]; then
     [ "$b" = "main" ] && continue
     n=$(git -C "$PROJECTS_ROOT/DryDock" rev-list --count "main..$b" 2>/dev/null || echo 0)
     [ "$n" = "0" ] && continue
+    # A squash-merged PR leaves its local branch with commits main has never
+    # seen by SHA, while the *content* is already in main. Counting commits
+    # alone reports that as unmerged work every time a PR lands. Compare trees:
+    # an empty diff against main means it shipped and the ref is just stale.
+    if [ -z "$(git -C "$PROJECTS_ROOT/DryDock" diff --stat main "$b" 2>/dev/null)" ]; then
+      emit "branch:$b:merged" "BRANCH DryDock/$b — squash-merged into main, local ref stale"
+      continue
+    fi
     emit "branch:$b:$n" "BRANCH DryDock/$b — $n commit(s) not in main"
   done
 fi

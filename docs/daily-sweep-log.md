@@ -975,3 +975,110 @@ sweep read the tree. The concurrency point stands harder than written — the
 count in a DIRTY row is a sample, not a measurement, when the tree is live.
 It baselined at 6, so it will legitimately re-surface tomorrow at whatever
 count it settles on; that is correct behaviour, not a repeat of the drip.
+
+## 2026-08-12 — eighth run
+
+Yesterday's run happened (`8873b49`, PR #35, plus the docs follow-up `09f9d57`
+/ #36), so this is a true 24-hour diff. **One** NEW line, and it was a false
+positive — produced by the sweep's own branch check, two minutes after PR #37
+merged. Zero tasks filed, one script fix.
+
+### The one NEW line, and why it was wrong
+
+```
+BRANCH DryDock/jam/drydock-chrome-launch-skill-f472a9 — 10 commit(s) not in main
+```
+
+Ten commits is a lot of unmerged work to appear overnight, which is what made
+it worth thirty seconds of checking rather than filing. It is PR #37 — *"Fix
+the usage undercount, make the slow reads non-blocking, and open the dashboard
+on real signal"* — **merged at 06:01:34Z**, one minute and forty seconds before
+the sweep read the ref at 06:03.
+
+The branch check counted `git rev-list main..<branch>` and stopped there. A
+squash merge writes one new commit onto main and leaves every original SHA
+unreachable from it, so the count is honestly 10 and completely meaningless:
+`git diff main <branch>` is **empty**. The content shipped; only the ref is
+stale.
+
+This is not a one-off. It fires on *every* squash-merged PR whose local branch
+outlives the merge, which — given this repo squash-merges everything, including
+the PR that closes each of these sweeps — means the routine was set up to
+manufacture a fake finding roughly once per run.
+
+### The script change
+
+Compare trees, not commit counts, and report the two states differently
+([scripts/daily-sweep.sh](../scripts/daily-sweep.sh)):
+
+```sh
+if [ -z "$(git -C "$PROJECTS_ROOT/DryDock" diff --stat main "$b" 2>/dev/null)" ]; then
+  emit "branch:$b:merged" "BRANCH DryDock/$b — squash-merged into main, local ref stale"
+  continue
+fi
+```
+
+The branch still appears in FULL STATE — a stale ref is real, and per the
+standing rule nothing gets deleted without the user — but it now says what it
+is. The fingerprint keys on `merged` rather than a commit count, so it is
+*state*, not a date, and it will not re-alarm as commits accumulate on main
+behind it. It re-surfaces in NEW exactly once tomorrow (the key changed from
+`branch:…:10` to `branch:…:merged`), then goes quiet.
+
+Verified by re-running: the line now reads `squash-merged into main, local ref
+stale`.
+
+### Nothing filed, deliberately
+
+`GET /api/backlog` first, as the routine requires — 23 items. The stale branch
+is already covered by **p50 `XwA4qnzNtnv3XMBUUqhHm` — "Delete 2 stale local
+branches in DryDock"**, so filing a new row would have been a duplicate of an
+open task.
+
+One correction to that task's own text, recorded rather than acted on: it says
+*2* branches, and there is now exactly **1** — a different one. The two it was
+filed against are gone; `jam/drydock-chrome-launch-skill-f472a9` arrived after
+it. The task is still valid, its count is not. Left for the user, since editing
+someone else's open task mid-sweep is the kind of quiet rewrite this log exists
+to avoid.
+
+Everything else in FULL STATE is carried and already filed: 3 DryDock bot PRs
+(p72), 15 roboticsleadership bot PRs (p62), 8 dirty trees, the two sync rows,
+vibe-coding-security's divergence (p88), 7 no-upstream checkouts, 6 May test
+rows (p68).
+
+### Sync
+
+`pushedItems` **23**, `pulledNew` 0, `pulledUpdated` 0. No filing this run, so
+no second pass and no delta to report.
+
+`mirror.status` read, not assumed: **`disabled`** — "no tracker repo configured
+(Settings → Backlog mirror)". That is now **four consecutive runs** reading
+`disabled` against an open p65 (*"Configure the DryDock backlog GitHub
+mirror"*). Last run said three runs was worth either configuring or closing
+p65; four is that same recommendation with more evidence behind it and still
+nobody to approve it. It is a correct status, not a silent failure — the
+distinction the 07-26 lesson is about — but a field that has never once read
+anything else is not telling the routine anything.
+
+### Environment note
+
+`preview_start` refuses to run in an unattended session ("nobody is present to
+approve the command"), so the dev server came up via a backgrounded
+`npm run dev` instead. Ready in 1.4s, `GET /api/backlog` 200 before the sync
+POST, per the routine's ordering. Worth knowing for any future step here that
+reaches for the launch config.
+
+### For the next run
+
+- Same entry point, read only NEW. Expect **one** line tomorrow: the re-keyed
+  `branch:…:merged` fingerprint spending itself, exactly like the 08-11 sync
+  re-baseline did. If it appears, that is the migration saving, not a finding.
+- If a `BRANCH` line ever shows a commit count again, it is real unmerged work
+  — the tree comparison has already ruled out the squash-merge case.
+- Carried watch-items: p65 having now read `disabled` four runs running; the
+  three personal PRs against p55's threshold; roboticsleadership's bot queue
+  (15 and still climbing, never merging); and p50's branch count being wrong.
+- The general shape worth carrying past this repo: **a count of commits is not
+  a measure of unmerged work under squash merges.** The routine's own merge
+  strategy was generating its own findings.
