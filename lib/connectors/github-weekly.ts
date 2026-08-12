@@ -62,7 +62,17 @@ function unavailable(reason: string): WeeklyPullActivity {
   };
 }
 
-/** `YYYY-MM-DD`, which is the only date form `gh search` qualifiers accept. */
+/**
+ * `YYYY-MM-DD` — the only date form `gh search` qualifiers accept.
+ *
+ * Note the resulting window is slightly wider than the caller's: truncating
+ * to a UTC date floors to midnight, so a 7-day cutoff admits up to ~24h more.
+ * That makes the PR counts a *marginally* longer window than the commit count
+ * beside them, which comes from git's exact `--since=7 days ago`. Left as-is
+ * because `gh search` has no finer qualifier, but it means the two figures on
+ * the opener are not over byte-identical windows — worth knowing before
+ * anyone tries to reconcile "54 PRs merged" against "57 commits" exactly.
+ */
 export function ghDateFloor(date: Date): string {
   return date.toISOString().slice(0, 10);
 }

@@ -200,7 +200,11 @@ function ClaudeBudgetCard({
               : hasError
                 ? `live read failed · ${link.host}`
                 : report
-                  ? `live from ~/.claude/projects · ${report.filesScanned} session log${report.filesScanned === 1 ? "" : "s"} · last turn ${formatLatestTurn(report.latestTurnAt)}`
+                  ? // "log files", not "session logs": since the reader started
+                    // recursing into subagents/, most of this count is agent
+                    // transcripts rather than sessions. The session figure is in
+                    // each window block below.
+                    `live from ~/.claude/projects · ${report.filesScanned} log file${report.filesScanned === 1 ? "" : "s"} (sessions + agents) · last turn ${formatLatestTurn(report.latestTurnAt)}`
                   : `deep-link only · ${link.host}`}
           </span>
         </div>
