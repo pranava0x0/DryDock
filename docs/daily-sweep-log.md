@@ -1315,3 +1315,120 @@ reaches for the launch config.
   `unmerged` means the sweep goes silent about real work forever. They are not
   symmetric, and the whitespace bug lived on the silent side while this log was
   asserting it couldn't happen.
+
+## 2026-08-13 — ninth run
+
+Quiet day. **NEW SINCE LAST RUN was empty**, and nothing was filed. The
+interesting parts of this run were a transient GitHub failure that cost a whole
+pass, and one open task whose recorded count had drifted badly.
+
+### The run took three passes, and only the first failure was real
+
+The 06:02 pass died in the GitHub half:
+
+```
+!! gh search issues failed: Post "https://api.github.com/graphql":
+   read tcp ...->140.82.114.6:443: read: connection reset by peer
+```
+
+The partial-run guard did exactly its job — it printed the local half, flagged
+the run as incomplete, and **refused to save state**. That refusal is the whole
+value of the guard: had the truncated result been saved as the baseline, every
+PR in the portfolio would have reported as NEW on the next working run. An
+immediate re-run at 06:06 succeeded with no other change, which is what
+identified the failure as transient rather than an auth or scope problem.
+
+### Routine change: bounded retry around `gh search`
+
+Per the standing rule to improve the script rather than the prompt, the retry
+now lives in `gh_search` — three attempts with a 3s/6s backoff. A connection
+reset that clears on its own no longer costs a full re-run.
+
+Two deliberate constraints on it:
+
+- **It never converts a failure into a success.** A genuine fault — expired
+  token, revoked scope — fails all three attempts and still degrades the run to
+  partial. The retry buys time against the network, nothing else.
+- **Output is buffered to a temp file and emitted only on a clean exit.** The
+  obvious version streams straight to stdout, which means a call that dies
+  partway through writing leaves those rows on stdout and the retry appends a
+  *second copy* — silently double-counting PRs in the one report this script
+  exists to make trustworthy. Retrying a command that writes to a shared stream
+  is only safe if you also control when that stream gets written.
+
+### Two count changes, neither of them a finding
+
+**The 26th fingerprint was self-inflicted.** State went 25 → 26 fingerprints
+across the run, which looked like something new appearing mid-sweep. It was
+`DIRTY DryDock [main] 1 uncommitted` — the script edit above. Worth stating
+plainly because a sweep that edits its own repo will always perturb its own
+output, and next run will show it again until this merges.
+
+**roboticsleadership went 16 → 17 open bot PRs between 06:06 and 06:20** (#161
+landed mid-run) and correctly did *not* report as NEW — both counts sit in the
+`le20` band. That is the 2026-08-07 banding working as designed. Recording it
+because "the line stayed quiet" and "the drip stopped" are indistinguishable
+from the output alone, and only one of them is true.
+
+### The one edit made to an open task
+
+**p62 `OuCH4PJ5nbwt-Y8CyhmkG` — "roboticsleadership auto-scrape PRs never merge
+(7 queued)"** had its *description* appended with a dated note: 17 open now,
+against **10 recorded on 2026-08-07**. Published robotics data is ~14 days
+stale. Priority held at 62 and the task was not re-filed, per the 2026-08-06
+standing note that raising it twice is nagging through a different channel.
+
+**The title was deliberately left reading "(7)"**, which is wrong on its face.
+The description says why: renaming a row trips DD-020, which mints a phantom
+Apple Notes duplicate on every subsequent sync. That item is structured so the
+stale number stays in the title and the true count lives in the body. The
+post-edit sync returned `pushedItems` **24**, unchanged — no duplicate minted,
+which is the check that the reasoning held.
+
+This cuts against yesterday's call, which declined to correct a different task's
+count on the grounds that editing an open task mid-sweep is a quiet rewrite.
+The distinction taken here: that would have been *changing* a claim, while this
+*appends a dated observation* to a field whose own text designates it as where
+counts live, in the same format the 2026-08-07 run used on the same item. A
+correction needs the user; an append to a running log does not. If that line
+turns out to be too fine, the fix is to stop appending, not to start renaming.
+
+### Sync
+
+`pushedItems` **24**, `pulledNew` 0, `pulledUpdated` 0, both before and after
+the description edit. `mirror.status` is **`disabled`** — reason
+`no tracker repo configured (Settings → Backlog mirror)`, which is the
+deliberately-off state, not a failed write. Configuring it is already filed as
+p65 `3ZaLZvSMK2KqyW7dzg_SU`.
+
+### Carried, all already filed
+
+3 DryDock bot PRs (p72), 17 roboticsleadership bot PRs (p62), 8 dirty trees, 2
+sync rows, vibe-coding-security's 55/98 divergence (p88), 7 no-upstream
+checkouts, 6 May test rows (p68), 1 stale local branch (p50), 4 long-open
+personal PRs (p55).
+
+### Environment note
+
+`preview_start` still refuses to run unattended, so the dev server came up via a
+backgrounded `npm run dev` as on 2026-08-12 — ready immediately, `GET
+/api/backlog` 200 before the sync POST. **Stopped again at the end of this run**,
+which the previous run did not record either way. An unattended task shouldn't
+leave a server holding port 3000 indefinitely, and a stray dev server on this
+tree is the precondition for the `.next/` corruption CLAUDE.md warns about if
+anything later runs a production build.
+
+### Lessons
+
+- **A retry loop around a command that writes to a shared stream needs the
+  writes buffered, or the retry is a duplication bug.** The failure mode is
+  invisible on the happy path and only appears on the rare retry — which is
+  precisely when nobody is watching closely.
+- **"It didn't report as NEW" and "it didn't change" are different claims, and a
+  banded fingerprint makes them look identical.** The drip added 7 PRs in 6 days
+  while reporting nothing at all, exactly as designed. Bands suppress the
+  *notification*, not the growth; something still has to read the absolute
+  number occasionally or a banded line becomes a blind spot with good intentions.
+- **A sweep that edits its own repo shows up in its own findings.** Not a bug,
+  but it means the fingerprint delta for any run that changes DryDock is off by
+  one against what actually happened in the portfolio.
