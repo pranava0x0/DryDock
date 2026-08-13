@@ -64,15 +64,36 @@ echo
 # baseline, making every PR report as NEW on the next working run.
 DEGRADED=0
 
+# Transient network faults degrade the whole run to partial, which costs a full
+# re-run for something that clears on its own: on 2026-08-13 a single
+# `read: connection reset by peer` from api.github.com aborted the sweep, and an
+# immediate manual re-run succeeded with no other change. Three attempts with a
+# short backoff absorb that class of failure. Retries are silent unless they all
+# fail, and a genuine fault (expired token, revoked scope) still fails every
+# attempt and still degrades the run — the retry only buys time, it never
+# converts a failure into a success.
+GH_TRIES=3
+
+# Output is buffered to a temp file and emitted only after a clean exit, never
+# streamed straight to stdout. A call that dies partway through writing would
+# otherwise leave those rows on stdout and the retry would append a second copy
+# of them, silently double-counting PRs in the very report this script exists to
+# make trustworthy.
 gh_search() { # <subcommand> <jq> -> stdout, nonzero on failure
-  local sub="$1" jq="$2" err
-  err="$(mktemp)"
-  if ! gh search "$sub" --owner "$GH_OWNER" --state open --limit 60 \
-        --json repository,number,title,author --jq "$jq" 2>"$err"; then
-    echo "!! gh search $sub failed: $(tr '\n' ' ' < "$err")" >&2
-    rm -f "$err"; return 1
-  fi
-  rm -f "$err"; return 0
+  local sub="$1" jq="$2" err out attempt=1
+  err="$(mktemp)"; out="$(mktemp)"
+  while :; do
+    if gh search "$sub" --owner "$GH_OWNER" --state open --limit 60 \
+          --json repository,number,title,author --jq "$jq" >"$out" 2>"$err"; then
+      cat "$out"; rm -f "$err" "$out"; return 0
+    fi
+    if [ "$attempt" -ge "$GH_TRIES" ]; then
+      echo "!! gh search $sub failed after $GH_TRIES attempts: $(tr '\n' ' ' < "$err")" >&2
+      rm -f "$err" "$out"; return 1
+    fi
+    sleep $(( attempt * 3 ))
+    attempt=$(( attempt + 1 ))
+  done
 }
 
 BOT_RUN_MIN=3   # this many open bot PRs in one repo collapses them to a run
