@@ -1408,6 +1408,16 @@ sync rows, vibe-coding-security's 55/98 divergence (p88), 7 no-upstream
 checkouts, 6 May test rows (p68), 1 stale local branch (p50), 4 long-open
 personal PRs (p55).
 
+### Environment note
+
+`preview_start` still refuses to run unattended, so the dev server came up via a
+backgrounded `npm run dev` as on 2026-08-12 — ready immediately, `GET
+/api/backlog` 200 before the sync POST. **Stopped again at the end of this run**,
+which the previous run did not record either way. An unattended task shouldn't
+leave a server holding port 3000 indefinitely, and a stray dev server on this
+tree is the precondition for the `.next/` corruption CLAUDE.md warns about if
+anything later runs a production build.
+
 ### Lessons
 
 - **A retry loop around a command that writes to a shared stream needs the
