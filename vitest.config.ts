@@ -16,7 +16,10 @@ export default defineConfig({
     // child processes. Sequential execution keeps them simple and the suite
     // is small enough that wall-clock isn't a concern yet.
     fileParallelism: false,
-    include: ["lib/**/*.test.ts"],
+    // `components/` is included for the non-React logic that lives beside
+    // the hooks — cache invalidation, summary formatting. Rendering tests
+    // would need a DOM environment; these deliberately don't.
+    include: ["lib/**/*.test.ts", "components/**/*.test.ts"],
     environment: "node",
   },
 });
