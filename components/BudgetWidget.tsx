@@ -196,12 +196,36 @@ export function BudgetWidget() {
         aria-label={`${win.elapsedPct.toFixed(0)}% of ${monthLabel} elapsed, ${formatCountdown(win.secondsUntilReset)} left, ${compact.format(totalTok)} tokens used`}
       >
         <span className="font-mono text-zinc-100">{win.elapsedPct.toFixed(0)}%</span>
-        <span className="text-kraken-boundless">·</span>
-        <span className="text-kraken-ice">{formatCountdown(win.secondsUntilReset)} left</span>
+        {/* The countdown is hidden below `sm`, and that is a nav fix rather
+            than a cosmetic one.
+
+            Measured at 375px: the header's tab row needed 238px and had
+            180px, a 58px deficit — so "Analytics", the last tab, sat
+            entirely outside the visible strip. The row is `overflow-x:
+            auto` (with `no-scrollbar`), so it was reachable by dragging,
+            but nothing on screen suggested there was a fourth tab, which
+            makes a whole section of the app invisible on the app's primary
+            viewport. Note the document reports no horizontal overflow at
+            all here — only the nav container's own
+            `scrollWidth > clientWidth` shows it.
+
+            This pill was 134px of that. Dropping the countdown frees ~84px,
+            which clears the deficit and lets all four tabs sit in view. The
+            percentage — the number the pill exists for — stays, the full
+            countdown is one tap away in the sheet this button opens, and
+            the `aria-label` above still reads the whole thing, so nothing
+            is lost for a screen reader. Same trade the wordmark makes two
+            elements to the left. */}
+        <span className="hidden text-kraken-boundless sm:inline">·</span>
+        <span className="hidden text-kraken-ice sm:inline">
+          {formatCountdown(win.secondsUntilReset)} left
+        </span>
         {credits !== null ? (
           <>
-            <span className="text-kraken-boundless">·</span>
-            <span className="font-mono text-emerald-300">${credits.toFixed(2)}</span>
+            <span className="hidden text-kraken-boundless sm:inline">·</span>
+            <span className="hidden font-mono text-emerald-300 sm:inline">
+              ${credits.toFixed(2)}
+            </span>
           </>
         ) : null}
       </button>
