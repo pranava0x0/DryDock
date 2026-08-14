@@ -10,6 +10,23 @@ export interface ProjectCardProps {
 
 export function ProjectCard({ project, taskCounts }: ProjectCardProps) {
   const activeCount = taskCounts.running + taskCounts.claimed;
+  /**
+   * Whether this project has any dispatch history at all.
+   *
+   * Measured 2026-08-13: 1 of 30 projects. So the counts row was rendering
+   * `0 pending · 0 active · 0 done` on essentially every card — eighteen
+   * zeros across the six cards the dashboard shows, plus a paragraph above
+   * explaining what the zeros mean. That is the same "thirty rows of zeros"
+   * the opener was rebuilt to kill, surviving one level down.
+   *
+   * A zero here is a true zero, not an unread value, so hiding it loses no
+   * information: the card still links through to the project, where the
+   * real (empty) task list lives. The row returns the moment there is
+   * something to count — which is exactly when it starts being worth the
+   * space. Same idiom as the `failed > 0` line below, applied to the group.
+   */
+  const hasTaskActivity =
+    taskCounts.pending + activeCount + taskCounts.done + taskCounts.failed > 0;
   return (
     <Link
       href={`/project/${project.id}`}
@@ -35,6 +52,7 @@ export function ProjectCard({ project, taskCounts }: ProjectCardProps) {
         <ProviderBadge provider={project.provider} />
       </div>
 
+      {hasTaskActivity ? (
       <dl className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-400">
         <div className="flex items-center gap-1">
           <dt className="sr-only">Pending</dt>
@@ -59,6 +77,7 @@ export function ProjectCard({ project, taskCounts }: ProjectCardProps) {
           </div>
         ) : null}
       </dl>
+      ) : null}
     </Link>
   );
 }

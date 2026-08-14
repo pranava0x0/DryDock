@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Disclosure, InlineDisclosure } from "./Disclosure";
+import { useCachedResource } from "./useCachedResource";
 
 /**
  * Analytics → Flow (EP-11 Spec C).
@@ -77,37 +78,36 @@ function fmt(n: number): string {
 }
 
 export function FlowTab() {
-  const [data, setData] = useState<FlowSummary | null>(null);
   const [windowDays, setWindowDays] = useState<number>(90);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetch(`/api/flow?window=${windowDays}`)
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (body.error) throw new Error(body.error);
-        setData(body as FlowSummary);
-        setError(null);
-      })
-      .catch((e: Error) => !cancelled && setError(e.message))
-      .finally(() => !cancelled && setLoading(false));
-    return () => {
-      cancelled = true;
-    };
-  }, [windowDays]);
+  /**
+   * Cached per window, because the URL is the cache key: flipping
+   * 30d → 90d → 30d re-reads nothing the second time.
+   *
+   * This is the tab that most needed it. The underlying git sweep is
+   * 16–25s cold, and switching to Runs and back used to unmount this
+   * component, throw the payload away, and re-request — landing on
+   * "Reading your git history…" even though the server already had the
+   * answer. The server's SWR made the *request* fast; only the client
+   * cache stops the flash.
+   *
+   * A longer max-age than the default fits here: the window is 90 days of
+   * git history, so a payload a couple of minutes old is not meaningfully
+   * different from a fresh one.
+   */
+  const { data, error, loading, stale } = useCachedResource<FlowSummary>(
+    `/api/flow?window=${windowDays}`,
+    { maxAgeMs: 120_000 },
+  );
 
-  if (loading && !data) {
+  if (loading) {
     return (
-      <p className="text-sm text-kraken-shadow">
+      <p className="dd-pulse text-sm text-kraken-shadow">
         Reading your git history…
       </p>
     );
   }
-  if (error) {
+  if (error && !data) {
     return (
       <p
         role="alert"
@@ -138,6 +138,13 @@ export function FlowTab() {
             {days === 365 ? "1y" : `${days}d`}
           </button>
         ))}
+        {/* Cached numbers are shown immediately; this says when they're
+            being re-read, so a stale figure never passes as a live one. */}
+        {stale ? (
+          <span className="dd-pulse ml-auto self-center text-xs text-kraken-shadow">
+            refreshing
+          </span>
+        ) : null}
       </div>
 
       {data.reason ? (

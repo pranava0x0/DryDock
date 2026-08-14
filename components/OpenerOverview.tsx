@@ -1,11 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import type { Overview, OverviewTodo } from "@/lib/insights/overview";
+import type { NextUp } from "@/lib/insights/next-up";
+import type { RecentSessionsResult } from "@/lib/connectors/recent-sessions.types";
+import { useCachedResource } from "@/components/useCachedResource";
+import { NextUpPanel } from "@/components/NextUp";
+import { RecentSessions } from "@/components/RecentSessions";
+import { Disclosure } from "@/components/Disclosure";
 
 interface OverviewResponse extends Overview {
   cachedAt: string;
   refreshing?: boolean;
+  recent: RecentSessionsResult;
+  nextUp: NextUp;
 }
 
 const compact = new Intl.NumberFormat(undefined, {
@@ -34,55 +41,27 @@ function countLabel(value: number | null, truncated: boolean): string | null {
  * is a number that moves week to week, or a link you can act on.
  */
 export function OpenerOverview() {
-  const [data, setData] = useState<OverviewResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Client-side SWR. The previous mount-fetch meant every trip back to the
+  // dashboard tore this panel down to "Reading this week's activity…" and
+  // re-fetched — the data was already known, the client was just throwing
+  // it away on unmount. Now the last payload is kept outside React and
+  // repainted on the first frame.
+  const {
+    data,
+    error,
+    loading,
+    stale,
+    refresh,
+  } = useCachedResource<OverviewResponse>("/api/overview", {
+    // The server answers a stale request immediately with `refreshing:
+    // true` and rebuilds behind it, so come back for the rebuilt payload
+    // rather than sitting on old numbers under a permanent label.
+    shouldPoll: (body) => body.refreshing === true,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    // The server answers a stale request immediately with `refreshing: true`
-    // and rebuilds behind it. A single mount fetch would therefore leave this
-    // browser on the old numbers under a permanent "refreshing" label until
-    // the user navigated — so poll back for the rebuilt payload. Bounded,
-    // because a read that keeps reporting `refreshing` must not become an
-    // endless poll.
-    const REFRESH_POLL_MS = 3000;
-    const MAX_FOLLOW_UPS = 10;
+  if (loading) return <OpenerSkeleton />;
 
-    const load = async (followUps: number): Promise<void> => {
-      try {
-        const res = await fetch("/api/overview");
-        const body = await res.json();
-        if (cancelled) return;
-        if (!res.ok) throw new Error(body.error ?? "Failed to load overview");
-        setData(body);
-        setError(null);
-        if (body.refreshing === true && followUps < MAX_FOLLOW_UPS) {
-          timer = setTimeout(() => void load(followUps + 1), REFRESH_POLL_MS);
-        }
-      } catch (err) {
-        if (!cancelled) setError((err as Error).message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    void load(0);
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
-
-  if (loading) {
-    return (
-      <p className="dd-pulse mb-6 text-xs text-kraken-shadow">
-        Reading this week&apos;s activity…
-      </p>
-    );
-  }
-  if (error) {
+  if (error && !data) {
     return (
       <p
         className="mb-6 rounded-md border border-kraken-alert/30 bg-kraken-alert/10 px-3 py-2 text-sm text-kraken-alert"
@@ -97,19 +76,42 @@ export function OpenerOverview() {
   const { week, shipped, github, todos, todosUnavailable, staleCount } = data;
 
   return (
-    <section className="mb-6">
+    <>
+      {/* The recommendation leads. Everything below it is evidence. */}
+      <NextUpPanel nextUp={data.nextUp} />
+
+      <section className="mb-6">
       <div className="flex items-baseline justify-between gap-3">
         <h1 className="text-xl font-semibold tracking-tight text-zinc-50">
           This week
         </h1>
-        {data.refreshing ? (
+        {/* `stale` is the client refetching; `refreshing` is the server
+            rebuilding behind a stale answer. Both mean "these numbers are
+            not final", so both say so. */}
+        {stale || data.refreshing ? (
           <span className="dd-pulse text-xs text-kraken-shadow">refreshing</span>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            onClick={refresh}
+            className="text-xs text-kraken-shadow transition hover:text-kraken-ice"
+          >
+            refresh
+          </button>
+        )}
       </div>
+
+      {error ? (
+        // A failed *refresh* keeps the cached payload on screen — the
+        // numbers below are still real, just older than intended.
+        <p className="mt-2 text-xs text-kraken-alert" role="alert">
+          Refresh failed: {error}. Showing the last good read.
+        </p>
+      ) : null}
 
       {/* Top lines. Every tile is a live number; none of them is a zero that
           only means "nothing configured". */}
-      <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+      <dl className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
         <Stat
           label="commits"
           value={shipped.commits}
@@ -136,24 +138,13 @@ export function OpenerOverview() {
           value={week ? compact.format(week.outputTokens) : null}
           sub={week ? `${compact.format(week.cacheReadTokens)} cache read` : "—"}
         />
-        <Stat
-          label="open"
-          value={
-            // Only a real total when both halves were read. Adding a null to a
-            // number would have quietly reported the surviving half as the sum.
-            github.openPulls === null || github.openIssues === null
-              ? null
-              : countLabel(
-                  github.openPulls + github.openIssues,
-                  github.openPullsTruncated || github.openIssuesTruncated,
-                )
-          }
-          sub={
-            todosUnavailable
-              ? "gh unavailable"
-              : `${github.openPulls === null ? "—" : countLabel(github.openPulls, github.openPullsTruncated)} PRs · ${github.openIssues === null ? "—" : countLabel(github.openIssues, github.openIssuesTruncated)} issues`
-          }
-        />
+        {/* There was a fifth tile here — "open", reading `11 / 8 PRs · 3
+            issues`. It said exactly what the "All open work" row a few
+            pixels below now says in its collapsed summary, so it was the
+            same fact twice on one screen. Four is also the shape Analytics
+            → Flow already uses for a headline row, and this page should
+            not invent a second one. The count still has one home, and the
+            unread-vs-zero distinction lives there. */}
       </dl>
 
       {!todosUnavailable && github.reason ? (
@@ -171,41 +162,55 @@ export function OpenerOverview() {
         </p>
       ) : null}
 
-      {/* Top TODOs */}
-      <h2 className="mt-6 text-sm font-medium text-zinc-200">Top TODOs</h2>
+      {/* All open work.
+          This used to be a "Top TODOs" list rendered open, directly under
+          "Start here" — and every linked item in "Start here" is drawn from
+          the same ranking, so the top of the dashboard showed the same two
+          PRs twice, ~120px apart. "Start here" is the answer; this is the
+          evidence behind it, and evidence belongs one tap away. The summary
+          carries the counts so you never open it just to find out whether
+          it's worth opening. */}
       {todosUnavailable ? (
-        <p className="mt-1 text-xs text-kraken-shadow">
-          {github.reason ?? "GitHub is unavailable"} — this list is empty
-          because it could not be read, not because nothing is open.
+        <p className="mt-4 rounded-lg border border-kraken-boundless px-3 py-2 text-xs text-kraken-shadow">
+          {github.reason ?? "GitHub is unavailable"} — open work could not be
+          read. This is not the same as having nothing open.
         </p>
       ) : todos.length === 0 ? (
-        <p className="mt-1 text-xs text-kraken-shadow">
+        <p className="mt-4 text-xs text-kraken-shadow">
           Nothing open. No PRs or issues assigned to you.
         </p>
       ) : (
-        <>
-          <ul className="mt-2 divide-y divide-kraken-boundless/60 rounded-lg border border-kraken-boundless">
-            {todos.map((todo) => (
-              <TodoRow key={todo.key} todo={todo} />
-            ))}
-          </ul>
-          {staleCount > 0 ? (
-            // Demoted, not dropped — say how many so the tail is visible.
-            <p className="mt-2 text-xs text-kraken-shadow">
-              Plus {staleCount} open item{staleCount === 1 ? "" : "s"} untouched
-              for over 6 months, ranked below everything current.
-            </p>
-          ) : null}
-        </>
+        <div className="mt-4">
+          <Disclosure
+            title="All open work"
+            summary={openWorkSummary(github, staleCount)}
+          >
+            <ul className="divide-y divide-kraken-boundless/60">
+              {todos.map((todo, i) => (
+                <TodoRow key={todo.key} todo={todo} index={i} />
+              ))}
+            </ul>
+            {staleCount > 0 ? (
+              // Demoted, not dropped — say how many so the tail is visible.
+              <p className="mt-2 text-xs text-kraken-shadow">
+                Plus {staleCount} open item{staleCount === 1 ? "" : "s"}{" "}
+                untouched for over 6 months, ranked below everything current.
+              </p>
+            ) : null}
+          </Disclosure>
+        </div>
       )}
 
-      {/* Shipped — the commit/PR history behind the top lines. */}
+      {/* Shipped — the commit/PR history behind the top lines. Uses the
+          house Disclosure so it matches Analytics → Flow, whose collapsed
+          rows each carry their own headline. */}
       {shipped.recentMerged.length > 0 || shipped.byProject.length > 0 ? (
-        <details className="mt-4 rounded-lg border border-kraken-boundless">
-          <summary className="cursor-pointer px-3 py-2 text-sm text-kraken-ice">
-            What shipped this week
-          </summary>
-          <div className="px-3 pb-3">
+        <div className="mt-2">
+        <Disclosure
+          title="What shipped"
+          summary={`${shipped.commits} commits · ${shipped.recentMerged.length} merged PRs`}
+        >
+          <div>
             {shipped.byProject.length > 0 ? (
               <>
                 <p className="mt-1 text-xs uppercase tracking-wide text-kraken-shadow">
@@ -256,10 +261,62 @@ export function OpenerOverview() {
               <p className="mt-2 text-xs text-kraken-shadow">{shipped.pullsReason}</p>
             ) : null}
           </div>
-        </details>
+        </Disclosure>
+        </div>
       ) : null}
-    </section>
+
+      <RecentSessions recent={data.recent} />
+      </section>
+    </>
   );
+}
+
+/**
+ * Cold-load placeholder.
+ *
+ * Shown only when there is genuinely nothing cached — with the client
+ * cache in place that is a first-ever visit or a new browser session, not
+ * an ordinary navigation. It mirrors the real layout so the page doesn't
+ * jump when data lands.
+ */
+function OpenerSkeleton() {
+  return (
+    <div className="mb-6" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading this week’s activity</span>
+      <div className="dd-skeleton h-7 w-40 rounded-md" />
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {Array.from({ length: 5 }, (_, i) => (
+          <div
+            key={i}
+            className="dd-skeleton h-[68px] rounded-lg border border-kraken-boundless"
+          />
+        ))}
+      </div>
+      <div className="dd-skeleton mt-6 h-5 w-28 rounded-md" />
+      <div className="dd-skeleton mt-2 h-[132px] rounded-lg border border-kraken-boundless" />
+    </div>
+  );
+}
+
+/**
+ * The headline a collapsed "All open work" row must carry.
+ *
+ * An unread count renders as an em dash here for the same reason it does
+ * in the tiles: a search that failed and a search that returned nothing
+ * must not produce the same string.
+ */
+function openWorkSummary(
+  github: Overview["github"],
+  staleCount: number,
+): string {
+  const part = (value: number | null, truncated: boolean, noun: string) =>
+    value === null ? `— ${noun}` : `${countLabel(value, truncated)} ${noun}`;
+  const head = `${part(github.openPulls, github.openPullsTruncated, "PRs")} · ${part(
+    github.openIssues,
+    github.openIssuesTruncated,
+    "issues",
+  )}`;
+  return staleCount > 0 ? `${head} · +${staleCount} stale` : head;
 }
 
 function Stat({
@@ -283,9 +340,13 @@ function Stat({
   );
 }
 
-function TodoRow({ todo }: { todo: OverviewTodo }) {
+function TodoRow({ todo, index }: { todo: OverviewTodo; index: number }) {
   return (
-    <li>
+    <li
+      className="dd-rise"
+      // Capped so a long list's tail doesn't arrive noticeably late.
+      style={{ ["--dd-delay" as string]: `${Math.min(index, 6) * 35}ms` }}
+    >
       <a
         href={todo.url}
         target="_blank"

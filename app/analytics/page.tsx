@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { AnalyticsSummary } from "@/lib/db/analytics";
 import { UsageTab } from "@/components/UsageTab";
 import { FlowTab } from "@/components/FlowTab";
+import { useCachedResource } from "@/components/useCachedResource";
 
 /**
  * Analytics is three tabs (EP-10 Spec B): **Runs** is the original page,
@@ -172,23 +173,16 @@ export default function AnalyticsPage() {
 }
 
 function RunsTab() {
-  const [data, setData] = useState<AnalyticsSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/analytics")
-      .then((r) => r.json())
-      .then((d: AnalyticsSummary) => setData(d))
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+  // Cached so switching Runs → Flow → Runs repaints instantly instead of
+  // dropping back to "loading…" for a payload the client already had.
+  const { data, error, loading } =
+    useCachedResource<AnalyticsSummary>("/api/analytics");
 
   return (
     <>
       {loading ? (
-        <p className="text-sm text-kraken-shadow">loading…</p>
-      ) : error ? (
+        <p className="dd-pulse text-sm text-kraken-shadow">loading…</p>
+      ) : error && !data ? (
         <p className="rounded-md border border-kraken-alert/30 bg-kraken-alert/10 px-3 py-2 text-sm text-kraken-alert">
           {error}
         </p>
