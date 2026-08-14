@@ -1432,3 +1432,115 @@ anything later runs a production build.
 - **A sweep that edits its own repo shows up in its own findings.** Not a bug,
   but it means the fingerprint delta for any run that changes DryDock is off by
   one against what actually happened in the portfolio.
+
+## 2026-08-14 — tenth run
+
+`scripts/daily-sweep.sh` reported **one** line under NEW SINCE LAST RUN, against
+26 fingerprints in the full state. That single line turned out to be the
+interesting kind of new — not "another item appeared" but "a thing that has
+happened silently every day for two weeks stopped happening."
+
+### The NEW line: FantasyGM#62
+
+`PR FantasyGM#62 @pranava0x0 data: social-only refresh` is the first FantasyGM
+PR this sweep has ever reported. That is the finding, not the PR itself.
+
+FantasyGM opens a social-only data-refresh PR **every single day**: #48 through
+#61 span 2026-07-31 to 2026-08-13, and every one of them was created and merged
+on the same date, none of them draft. They never appear in this sweep because
+they open and close inside a window that does not overlap the 06:0x run.
+
+**#62 is a draft, and it is still open.** Created 07:52Z, unchanged since
+(`updatedAt` identical to `createdAt` two and a quarter hours later), 0 review
+comments, and `gh pr checks` reports no checks because that repo has no CI —
+which is orthogonal and not evidence of anything, per the 2026-08-12 note. The
+PR body is a complete, plausible refresh: 5 files, +25,038/−14,570, 242 tests
+passing, secret scan clean. It reads like a run that did all its work and then
+failed at the last step, where the routine normally marks the PR ready and
+merges it.
+
+Filed as **p60 `I1PFrsJFHJlAqOBtiqzaR`** — "FantasyGM daily data-refresh PR #62
+stuck as a draft". Not merged: standing rule, this sweep does not merge other
+projects' PRs unattended, and a draft is the author's explicit not-yet signal.
+
+Worth noting how close this came to being invisible. A daily PR whose *number*
+changes every day produces a new fingerprint every day, so the mechanism that
+surfaced #62 would have surfaced #49 through #61 too — it never did, because
+they were merged before the sweep looked. The line appeared precisely because
+the automation broke. That is the fingerprint working correctly, but it is luck
+that the failure mode happens to be "stays open" rather than "never runs": a
+FantasyGM routine that stopped firing entirely would produce **no** line at all,
+and this sweep would report a quiet day. Absence of a daily PR is currently
+undetectable here.
+
+### What this run broke, briefly, and by its own hand
+
+Step 3 says start the dev server, then `curl 127.0.0.1:3000`. A DryDock dev
+server was **already running on 3000**, started Aug 13 18:31 and 11.5 hours old
+by the time this run began. Nothing in the routine checks for that, so
+`npm run dev` did what Next does when a port is taken: it silently bound
+**3001** and said so only in its own log.
+
+Two things followed. First, the routine's hardcoded `curl 3000` would have
+synced against a *different process* than the one it just started — both were
+DryDock here, so the sync was correct by luck rather than by construction.
+Second, and worse: the two servers share `.next/`. During the new server's
+initial compile, the already-running server on 3000 served **500s** —
+`ENOENT: .next/server/app/page.js` — for roughly a minute.
+
+The first probe of 3000 caught it mid-window (404 on `/api/backlog`, then 500
+on `/`), and the honest sequence matters: the initial read looked like a
+long-dead wedged server and was nearly written up as one. Checking `.next`
+mtimes showed `page.js` had been rewritten at 06:04 — i.e. the file was being
+replaced, not missing — and a re-probe returned 200 on both ports. **No lasting
+damage; the conclusion drawn from the first reading would have been wrong.**
+
+This is the mechanism CLAUDE.md documents for `npm run build` under a live dev
+server, and it applies to a second `next dev` on the same tree for the same
+reason. Filed as **p57 `k7n8M_0G8N_rXQCiyfEiC`** with the concrete fix: probe
+for a listener on 3000 whose `/api/backlog` returns 200 *and* whose process cwd
+is the DryDock checkout, reuse it, and do not stop it at the end because it
+isn't ours. Only start a server when none is found, and sync against the port
+actually bound.
+
+**The old server on 3000 was left running and healthy.** Prior runs stopped the
+server they started; this run did not start the one on 3000, so stopping it
+would have killed a process belonging to whoever opened it last night. The
+server this run *did* start on 3001 was stopped.
+
+### Sync
+
+`pushedItems` **24** before filing, **26** after, matching the two new items
+exactly — no phantom duplicates, which is the DD-020 check. `pulledNew` 0,
+`pulledUpdated` 0 on both passes. `mirror.status` is **`disabled`**, reason
+`no tracker repo configured (Settings → Backlog mirror)` — the deliberately-off
+state, not a failed write; already filed as p65 `3ZaLZvSMK2KqyW7dzg_SU`.
+
+### Deliberately skipped
+
+Everything in the full state that was already filed: 3 DryDock bot PRs (p72),
+17 roboticsleadership bot PRs (p62, still 17, still inside the `le20` band), 8
+dirty trees, 2 behind-upstream rows, vibe-coding-security's 55/98 divergence
+(p88), 7 no-upstream checkouts, 6 May test rows (p68), the stale
+squash-merged local branch (p50), 4 long-open personal PRs (p55). No task
+descriptions were edited this run — nothing had a count that moved.
+
+### Lessons
+
+- **A daily automation that succeeds silently is only observable through its
+  failures, and only through the failures that leave something behind.** Two
+  weeks of FantasyGM refreshes were invisible to this sweep; the first one to
+  break showed up instantly, but only because "broke" meant "left a PR open." A
+  routine that stops running entirely still reads as a quiet day. Detecting
+  *absence* needs a positive check — the last successful run's date — not the
+  lack of a line.
+- **A port already in use is a silent fork in the road, not an error.** `next
+  dev` falling back to 3001 is a one-line notice in a log nobody reads, after
+  which every hardcoded `:3000` in the surrounding routine addresses a process
+  that isn't the one it started. Bind the port explicitly, or read back the port
+  actually bound; never both start a server and assume where it landed.
+- **Re-read a broken-looking thing after the thing that might have broken it has
+  settled.** A 404, then a 500, on an 11-hour-old server is a persuasive picture
+  of a long-dead process, and it was actually a ~60-second rebuild window caused
+  by this run one minute earlier. One `stat` on the file in the error message,
+  and one re-probe, turned a wrong diagnosis into an accurate one.
