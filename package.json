@@ -20,13 +20,13 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "autoprefixer": "^10.5.4",
     "eslint": "^8.57.1",
-    "eslint-config-next": "15.5.22",
-    "postcss": "^8.5.22",
+    "eslint-config-next": "15.5.23",
+    "postcss": "^8.5.26",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
     "vitest": "^4.1.10"
