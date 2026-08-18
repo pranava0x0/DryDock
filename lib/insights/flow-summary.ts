@@ -59,6 +59,17 @@ export interface FlowSummary {
   github: GithubWork | null;
   reason: string | null;
   generatedAt: string;
+  /**
+   * True when this payload was served stale while a rebuild runs behind it
+   * (Codex, PR #41).
+   *
+   * Without it the server half of stale-while-revalidate is the only half
+   * that exists: the client is handed old numbers with no way to tell, so
+   * it clears its own "refreshing" marker and never comes back for the
+   * rebuilt result. The figures then sit stale for as long as the tab
+   * stays mounted. Pair with `generatedAt` to say how old they are.
+   */
+  refreshing?: boolean;
 }
 
 export interface FlowSummaryOptions {
@@ -68,33 +79,74 @@ export interface FlowSummaryOptions {
 }
 
 /**
- * In-process cache. The sweep is ~7s across 32 repos on a warm SSD —
- * fine as a deliberate refresh, far too slow to pay on every tab switch.
+ * In-process cache, stale-while-revalidate.
+ *
+ * ── Why not a plain TTL ─────────────────────────────────────────────────
+ * This sweep was measured at **16–25s across 34 repos** (2026-08-13, M-
+ * series Mac, warm page cache) — not the "~7s" an earlier revision of this
+ * comment claimed. That gap mattered: under a plain 5-minute TTL, exactly
+ * one request per five minutes paid the whole 25s, and since the Analytics
+ * tab is the thing that requests it, the tab was reliably broken rather
+ * than occasionally slow.
+ *
+ * Stale-while-revalidate converts that cost into staleness instead: an
+ * expired entry is returned *immediately* and a rebuild starts behind it,
+ * de-duped so a burst of requests triggers one sweep. Only a genuinely
+ * cold process blocks, because then there is nothing to show.
+ *
+ * The response carries `generatedAt`, so a caller can always say how old
+ * the numbers are rather than implying they are live.
  */
 let cache: { key: string; at: number; value: FlowSummary } | null = null;
+let inFlight: { key: string; promise: Promise<FlowSummary> } | null = null;
 export const FLOW_TTL_MS = 5 * 60 * 1000;
+
+function refreshFlow(
+  cacheKey: string,
+  options: FlowSummaryOptions,
+): Promise<FlowSummary> {
+  if (inFlight && inFlight.key === cacheKey) return inFlight.promise;
+  const promise = computeFlowSummary(options)
+    .then((value) => {
+      cache = { key: cacheKey, at: Date.now(), value };
+      return value;
+    })
+    .finally(() => {
+      if (inFlight?.key === cacheKey) inFlight = null;
+    });
+  inFlight = { key: cacheKey, promise };
+  return promise;
+}
 
 export async function buildFlowSummary(
   options: FlowSummaryOptions = {},
 ): Promise<FlowSummary> {
+  // A test passing an explicit `now` must neither read nor poison the
+  // production cache.
+  if (options.now) return computeFlowSummary(options);
+
   const cacheKey = `${options.windowDays ?? 90}|${options.includeGithub ? 1 : 0}`;
-  if (
-    !options.now &&
-    cache &&
-    cache.key === cacheKey &&
-    Date.now() - cache.at < FLOW_TTL_MS
-  ) {
-    return cache.value;
+  if (cache && cache.key === cacheKey) {
+    if (Date.now() - cache.at >= FLOW_TTL_MS) {
+      // Rebuild behind the answer. Errors are swallowed here on purpose:
+      // this promise has no caller, and an unhandled rejection would take
+      // the process down over a background refresh whose stale result is
+      // still on screen. The next foreground call surfaces the failure.
+      void refreshFlow(cacheKey, options).catch(() => {});
+    }
+    // Report whether a rebuild is actually running right now — including
+    // one started by an earlier request that hasn't landed yet, which is
+    // why this checks `inFlight` rather than just the staleness test above.
+    const refreshing = inFlight?.key === cacheKey;
+    return refreshing ? { ...cache.value, refreshing } : cache.value;
   }
-  const value = await computeFlowSummary(options);
-  // Only cache the real clock — a test passing an explicit `now` must
-  // never poison the cache for production reads.
-  if (!options.now) cache = { key: cacheKey, at: Date.now(), value };
-  return value;
+  // A cold build is awaited, so what it returns is fresh by definition.
+  return refreshFlow(cacheKey, options);
 }
 
 export function _resetFlowCacheForTests(): void {
   cache = null;
+  inFlight = null;
 }
 
 async function computeFlowSummary(

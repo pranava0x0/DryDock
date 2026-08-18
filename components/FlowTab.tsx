@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Disclosure, InlineDisclosure } from "./Disclosure";
+import { useCachedResource } from "./useCachedResource";
 
 /**
  * Analytics → Flow (EP-11 Spec C).
@@ -46,6 +47,9 @@ interface FlowSummary {
   reposRead: number;
   root: string;
   reason: string | null;
+  generatedAt: string;
+  /** Server served this stale while rebuilding behind it. */
+  refreshing?: boolean;
 }
 
 /** design.md palette — agents share the provider hues. */
@@ -70,6 +74,17 @@ const AGENT_LABEL: Record<Agent, string> = {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WINDOWS = [30, 90, 365] as const;
 
+/** "just now" / "4m old" — coarse on purpose; precision here is noise. */
+function ageLabel(generatedAt: string): string {
+  const ms = Date.parse(generatedAt);
+  if (!Number.isFinite(ms)) return "";
+  const mins = Math.floor((Date.now() - ms) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m old`;
+  const hours = Math.floor(mins / 60);
+  return hours < 24 ? `${hours}h old` : `${Math.floor(hours / 24)}d old`;
+}
+
 function fmt(n: number): string {
   if (n < 1_000) return String(n);
   if (n < 1_000_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -77,44 +92,107 @@ function fmt(n: number): string {
 }
 
 export function FlowTab() {
-  const [data, setData] = useState<FlowSummary | null>(null);
   const [windowDays, setWindowDays] = useState<number>(90);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetch(`/api/flow?window=${windowDays}`)
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (body.error) throw new Error(body.error);
-        setData(body as FlowSummary);
-        setError(null);
-      })
-      .catch((e: Error) => !cancelled && setError(e.message))
-      .finally(() => !cancelled && setLoading(false));
-    return () => {
-      cancelled = true;
-    };
-  }, [windowDays]);
+  /**
+   * Cached per window, because the URL is the cache key: flipping
+   * 30d → 90d → 30d re-reads nothing the second time.
+   *
+   * This is the tab that most needed it. The underlying git sweep is
+   * 16–25s cold, and switching to Runs and back used to unmount this
+   * component, throw the payload away, and re-request — landing on
+   * "Reading your git history…" even though the server already had the
+   * answer. The server's SWR made the *request* fast; only the client
+   * cache stops the flash.
+   *
+   * A longer max-age than the default fits here: the window is 90 days of
+   * git history, so a payload a couple of minutes old is not meaningfully
+   * different from a fresh one.
+   */
+  const { data, error, loading, stale } = useCachedResource<FlowSummary>(
+    `/api/flow?window=${windowDays}`,
+    {
+      maxAgeMs: 120_000,
+      // The default 20s deadline is shorter than this endpoint's own cold
+      // read (16–25s for 90d, more for 1y), so it would fire on a cold
+      // sweep every time and report a timeout for a request that was
+      // working. A deadline has to be longer than the thing it is
+      // watching.
+      timeoutMs: 90_000,
+      // The client half of the server's SWR (Codex, PR #41). When
+      // /api/flow answers stale while rebuilding, come back for the
+      // rebuilt payload — otherwise the figures sit stale for as long as
+      // this tab stays mounted, with nothing on screen saying so. Bounded
+      // by the hook, and cleared on unmount.
+      shouldPoll: (body) => body.refreshing === true,
+      // The sweep is slow, so a rebuild takes a while; polling every 3s
+      // would just pile up no-op requests against it.
+      pollIntervalMs: 10_000,
+    },
+  );
 
-  if (loading && !data) {
+  /* The window selector renders in every state, including the error one.
+     It used to be inside the success branch, so a failed or timed-out read
+     replaced the whole tab with a message and took the buttons with it —
+     leaving no way to pick a different window, i.e. no way to recover
+     without a page reload. */
+  const selector = (
+    <div className="flex gap-2">
+      {WINDOWS.map((days) => (
+        <button
+          key={days}
+          type="button"
+          onClick={() => setWindowDays(days)}
+          className={`tap rounded-full px-3 text-xs font-medium transition ${
+            windowDays === days
+              ? "bg-kraken-ice text-kraken-deep"
+              : "border border-kraken-boundless text-zinc-300 hover:bg-kraken-boundless/30"
+          }`}
+        >
+          {days === 365 ? "1y" : `${days}d`}
+        </button>
+      ))}
+      {/* Cached numbers are shown immediately; this says when they're
+          being re-read, so a stale figure never passes as a live one. */}
+      {stale || data?.refreshing ? (
+        // `stale` = this client is refetching; `refreshing` = the server is
+        // rebuilding behind a stale answer. Either way the numbers below
+        // are not final, so say so rather than letting them read as live.
+        <span className="dd-pulse ml-auto self-center text-xs text-kraken-shadow">
+          refreshing
+        </span>
+      ) : data ? (
+        // Not refreshing: say how old the figures are instead of letting
+        // them imply "as of now". Cheap, and it makes staleness legible
+        // rather than something the user has to infer.
+        <span className="ml-auto self-center text-xs text-kraken-shadow">
+          {ageLabel(data.generatedAt)}
+        </span>
+      ) : null}
+    </div>
+  );
+
+  if (loading) {
     return (
-      <p className="text-sm text-kraken-shadow">
-        Reading your git history…
-      </p>
+      <div className="space-y-3">
+        {selector}
+        <p className="dd-pulse text-sm text-kraken-shadow">
+          Reading your git history…
+        </p>
+      </div>
     );
   }
-  if (error) {
+  if (error && !data) {
     return (
-      <p
-        role="alert"
-        className="rounded-md border border-kraken-alert/30 bg-kraken-alert/10 px-3 py-2 text-sm text-kraken-alert"
-      >
-        {error}
-      </p>
+      <div className="space-y-3">
+        {selector}
+        <p
+          role="alert"
+          className="rounded-md border border-kraken-alert/30 bg-kraken-alert/10 px-3 py-2 text-sm text-kraken-alert"
+        >
+          {error}
+        </p>
+      </div>
     );
   }
   if (!data) return null;
@@ -123,22 +201,14 @@ export function FlowTab() {
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
-        {WINDOWS.map((days) => (
-          <button
-            key={days}
-            type="button"
-            onClick={() => setWindowDays(days)}
-            className={`tap rounded-full px-3 text-xs font-medium transition ${
-              windowDays === days
-                ? "bg-kraken-ice text-kraken-deep"
-                : "border border-kraken-boundless text-zinc-300 hover:bg-kraken-boundless/30"
-            }`}
-          >
-            {days === 365 ? "1y" : `${days}d`}
-          </button>
-        ))}
-      </div>
+      {selector}
+      {error ? (
+        // A failed refresh over good cached data — the figures below are
+        // real, just older than intended.
+        <p className="text-xs text-kraken-alert" role="alert">
+          Refresh failed: {error}. Showing the last good read.
+        </p>
+      ) : null}
 
       {data.reason ? (
         <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">

@@ -296,9 +296,18 @@ describe("branch-merge-state.sh", () => {
    * cap" needs a history deeper than that cap — there is no cheaper way to
    * express it.
    *
-   * Hence the one deliberately slow fixture in this file (~7s): 520 commits
-   * built as a `commit-tree` chain inside a single shell, rather than 520
-   * child processes from here.
+   * Hence the one deliberately slow fixture in this file: 520 commits built
+   * as a `commit-tree` chain inside a single shell, rather than 520 child
+   * processes from here. Measured at 9.1–9.5s (2026-08-13, M-series Mac);
+   * an earlier comment claimed ~7s, which is why the explicit timeout below
+   * exists.
+   *
+   * The timeout is NOT decoration. This body is fully synchronous
+   * (`execFileSync`), so vitest cannot interrupt it — it can only compare
+   * the elapsed time against the limit once the block returns. Against the
+   * 5s default that is a coin flip decided by machine load: the same commit
+   * passed on an idle checkout and failed under a running dev server. A
+   * gate that flakes is a gate you stop reading.
    */
   it("finds a squash buried under 500+ later commits", () => {
     const repo = newRepo();
@@ -321,7 +330,7 @@ describe("branch-merge-state.sh", () => {
     );
     expect(Number(git(repo, "rev-list", "--count", "main"))).toBeGreaterThan(500);
     expect(state(repo, "feat")).toBe("stale 1");
-  });
+  }, 60_000);
 
   it("reports unmerged when the branch would conflict with main", () => {
     const repo = newRepo();

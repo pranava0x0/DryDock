@@ -28,7 +28,31 @@ interface UseAutoSyncOptions {
   intervalMs?: number;
   /** Set to false to disable the auto-trigger (manual only). */
   enabled?: boolean;
+  /**
+   * Minimum gap between two *mount-time* syncs, across mounts. Defaults
+   * to 60s. See `lastMountSyncAt`.
+   */
+  mountCooldownMs?: number;
 }
+
+/**
+ * When the mount-time sync last ran, module-scoped so it survives
+ * unmount.
+ *
+ * A mount sync is an `osascript` round-trip into Apple Notes. Client-side
+ * navigation unmounts and remounts the dashboard, so without this every
+ * trip back from Analytics fired another one — four `/api/backlog/sync`
+ * calls per visit once React's dev double-mount is counted. The server
+ * mutex made them harmless but not free.
+ *
+ * Deliberately not in `sessionStorage`: a genuine page load *should*
+ * re-sync, because that is the "I just opened the app" moment the sync
+ * exists to serve. This only suppresses the remounts within one page
+ * lifetime.
+ */
+let lastMountSyncAt = 0;
+
+const DEFAULT_MOUNT_COOLDOWN_MS = 60_000;
 
 /**
  * Client-side auto-sync orchestrator. Fires one sync on mount, then
@@ -85,6 +109,8 @@ export function useAutoSync(opts: UseAutoSyncOptions = {}): AutoSyncState {
     }
   }, []);
 
+  const mountCooldownMs = opts.mountCooldownMs ?? DEFAULT_MOUNT_COOLDOWN_MS;
+
   useEffect(() => {
     if (opts.enabled === false) return;
     let cancelled = false;
@@ -102,7 +128,14 @@ export function useAutoSync(opts: UseAutoSyncOptions = {}): AutoSyncState {
         // Ignore — the trigger below will surface any real error.
       });
 
-    void trigger();
+    // Skip the mount sync if one ran recently in this page lifetime. The
+    // interval path below and the manual `triggerSync` both bypass this —
+    // a cooldown on "the user asked" or "the poll is due" would be a bug,
+    // not an optimisation.
+    if (Date.now() - lastMountSyncAt >= mountCooldownMs) {
+      lastMountSyncAt = Date.now();
+      void trigger();
+    }
 
     if (!opts.intervalMs) {
       return () => {
@@ -128,7 +161,7 @@ export function useAutoSync(opts: UseAutoSyncOptions = {}): AutoSyncState {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [trigger, opts.intervalMs, opts.enabled]);
+  }, [trigger, opts.intervalMs, opts.enabled, mountCooldownMs]);
 
   return { syncing, lastSyncedAt, error, triggerSync: trigger };
 }

@@ -119,6 +119,93 @@ body {
   }
 }
 
+/* ── Entrance motion ──────────────────────────────────────────────────
+
+   Content that arrives asynchronously (the opener's tiles, the TODO rows,
+   the recent-session list) pops in without warning, which on a phone reads
+   as a layout glitch rather than as data landing. These give it a short
+   rise-and-fade.
+
+   Rules every animation in this file follows:
+
+   1. **`transform` and `opacity` only.** Both are handled on the
+      compositor, so an animating element costs no layout and no paint —
+      it can't make the rest of the page janky. Animating `height`,
+      `top`, or `filter` here would.
+   2. **One shot, `forwards`, ~260ms.** These run on data arrival, and
+      data arrives while you're reading. Anything longer is in your way,
+      and anything looping is a distraction on a dashboard you glance at.
+   3. **No `will-change`.** It promotes a layer permanently; for a
+      one-shot animation the browser's own heuristic is better and costs
+      no idle memory.
+   4. **Reduced motion removes the movement, never the content.** Each
+      one resolves to the final state immediately.
+
+   `dd-rise` staggers via an inline `--dd-delay`, capped by the caller so
+   a long list never delays its tail past a few hundred ms. */
+@keyframes dd-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.dd-rise {
+  animation: dd-rise 260ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation-delay: var(--dd-delay, 0ms);
+}
+
+/* Skeleton shimmer for a genuinely cold load. Translating a gradient-
+   filled pseudo-element keeps this compositor-only; animating
+   `background-position` would repaint every frame. */
+@keyframes dd-shimmer {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    transform: translate3d(100%, 0, 0);
+  }
+}
+
+.dd-skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: rgb(30 41 59 / 0.45);
+}
+
+.dd-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(148 163 184 / 0.12),
+    transparent
+  );
+  animation: dd-shimmer 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Critical, not cosmetic: `dd-rise` uses `animation-fill-mode: both`, so
+     during its delay the element holds the `from` state — opacity 0. If the
+     animation is suppressed without this rule resolving it to the final
+     state, the content is simply invisible. */
+  .dd-rise {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .dd-skeleton::after {
+    animation: none;
+  }
+}
+
 /* Horizontal scroll with no visible scrollbar.
 
    Used by the header nav below `sm`, where the tab row is wider than the

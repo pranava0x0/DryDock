@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
+import { useCachedResource } from "@/components/useCachedResource";
+import { InlineDisclosure } from "@/components/Disclosure";
 import type { Project } from "@/lib/db/projects";
 import type { TaskCountsByStatus } from "@/lib/db/tasks";
 import { ProjectCard } from "@/components/ProjectCard";
@@ -22,9 +24,6 @@ interface ProjectWithCounts extends Project {
 const VISIBLE_PROJECTS = 6;
 
 export default function Dashboard() {
-  const [projects, setProjects] = useState<ProjectWithCounts[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [showAllProjects, setShowAllProjects] = useState(false);
 
@@ -35,23 +34,16 @@ export default function Dashboard() {
   // /backlog if they navigate there.
   useAutoSync();
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await fetch("/api/projects");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load");
-      setProjects(data.projects);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  // Cached across navigation: coming back from Analytics repaints the
+  // project grid from the last payload instead of blanking to "loading…"
+  // and re-fetching 30 rows.
+  const {
+    data,
+    error,
+    loading,
+    refresh,
+  } = useCachedResource<{ projects: ProjectWithCounts[] }>("/api/projects");
+  const projects = data?.projects ?? [];
 
   return (
     <>
@@ -79,17 +71,23 @@ export default function Dashboard() {
             </Link>
           </div>
         </div>
-        {/* The three numbers on every card were unlabelled in effect: the words
-            were there, but nothing said what a task being "pending" vs
-            "active" actually meant. Explained once here, newest-worked-on
-            first so the ordering isn't a mystery either. */}
-        <p className="mb-4 text-xs text-kraken-shadow">
-          Each card counts its tasks — <span className="text-zinc-300">pending</span>{" "}
-          waiting to be dispatched, <span className="text-amber-300">active</span>{" "}
-          with an agent running now,{" "}
-          <span className="text-emerald-300">done</span> finished and gate-passed.
-          Sorted by most recently worked on.
-        </p>
+        {/* Legend for the per-card task counts, demoted to an inline
+            disclosure. Cards now render those counts only when a project
+            has dispatch history (1 of 30 here), so a permanently-visible
+            paragraph explaining three words that appear on one card was
+            spending four lines above the fold to define vocabulary most
+            readers never encounter. It stays available for when they do. */}
+        <InlineDisclosure label="What the numbers on a card mean">
+          <p>
+            A card counts its tasks — <span className="text-zinc-300">pending</span>{" "}
+            waiting to be dispatched,{" "}
+            <span className="text-amber-300">active</span> with an agent running
+            now, <span className="text-emerald-300">done</span> finished and
+            gate-passed. A project with no tasks yet shows no counts. Sorted by
+            most recently worked on.
+          </p>
+        </InlineDisclosure>
+        <div className="mb-4" />
 
         {error ? (
           <p

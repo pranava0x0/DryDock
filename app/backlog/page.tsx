@@ -8,6 +8,10 @@ import { InboxPanel } from "@/components/InboxPanel";
 import { GithubWorkPanel } from "@/components/GithubWorkPanel";
 import { QuickAdd } from "@/components/QuickAdd";
 import { InlineDisclosure } from "@/components/Disclosure";
+import {
+  invalidateCachedResource,
+  useCachedResource,
+} from "@/components/useCachedResource";
 
 type BacklogStatus =
   | "idea"
@@ -56,10 +60,7 @@ const STATUS_FILTERS: Array<BacklogStatus | "all"> = [
 ];
 
 export default function BacklogPage() {
-  const [items, setItems] = useState<BacklogItem[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
   const [filter, setFilter] = useState<BacklogStatus | "all">("idea");
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [newProjectId, setNewProjectId] = useState<string>("");
@@ -82,39 +83,51 @@ export default function BacklogPage() {
     triggerSync,
   } = useAutoSync({ intervalMs: 30_000 });
 
-  const refresh = useCallback(async () => {
-    try {
-      const [itemsRes, projectsRes] = await Promise.all([
-        fetch(
-          filter === "all"
-            ? "/api/backlog?stage=triaged"
-            : `/api/backlog?status=${filter}&stage=triaged`,
-        ),
-        fetch("/api/projects"),
-      ]);
-      const itemsData = await itemsRes.json();
-      const projectsData = await projectsRes.json();
-      if (!itemsRes.ok) throw new Error(itemsData.error ?? "Failed to load");
-      setItems(itemsData.items);
-      setProjects(projectsData.projects ?? []);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [filter]);
+  const itemsUrl =
+    filter === "all"
+      ? "/api/backlog?stage=triaged"
+      : `/api/backlog?status=${filter}&stage=triaged`;
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  /**
+   * Items are cached per filter URL, but with `maxAgeMs: 0` — the cached
+   * list paints on the first frame (so switching filters or coming back
+   * from another tab never blanks the page) while a re-read always goes
+   * out behind it. This list is writable and is also mutated *outside the
+   * browser*, by editing the Apple Note directly, so "serve without
+   * checking" is not a promise this page can make.
+   */
+  const {
+    data: itemsData,
+    error: itemsError,
+    loading,
+    refresh: refreshItems,
+  } = useCachedResource<{ items: BacklogItem[] }>(itemsUrl, { maxAgeMs: 0 });
+
+  // Shared with the dashboard's cache entry, so arriving here from
+  // Projects costs no request at all.
+  const { data: projectsData } = useCachedResource<{ projects: Project[] }>(
+    "/api/projects",
+  );
+
+  const items = itemsData?.items ?? [];
+  const projects = projectsData?.projects ?? [];
+
+  /**
+   * Re-read after a write. Clears every `/api/backlog` entry first: a
+   * mutation changes what the *other* filters return too, and those are
+   * the copies nobody is looking at when they go stale.
+   */
+  const refresh = useCallback(() => {
+    invalidateCachedResource("/api/backlog");
+    refreshItems();
+  }, [refreshItems]);
 
   // After every successful sync, re-fetch the items list so any new
   // rows pulled from Apple Notes show up without a manual reload.
   // Guarded on lastSyncedAt so initial renders (when it's still null)
   // don't fire a redundant fetch right after the mount-time refresh.
   useEffect(() => {
-    if (lastSyncedAt !== null) void refresh();
+    if (lastSyncedAt !== null) refresh();
   }, [lastSyncedAt, refresh]);
 
   const projectName = (projectId: string | null): string => {
@@ -317,12 +330,17 @@ export default function BacklogPage() {
         </InlineDisclosure>
       </header>
 
-      {error ? (
+      {/* Two independent failures share one banner: a write that was
+          rejected (`error`) and a read that failed (`itemsError`). The
+          write error wins when both are set — it's the one the user just
+          caused, and the list below is still showing its last good copy. */}
+      {error ?? itemsError ? (
         <p
           className="mb-4 rounded-md border border-kraken-alert/30 bg-kraken-alert/10 px-3 py-2 text-sm text-kraken-alert"
           role="alert"
         >
-          {error}
+          {error ??
+            `Could not refresh the list: ${itemsError}. Showing the last good read.`}
         </p>
       ) : null}
 
