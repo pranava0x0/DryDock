@@ -110,9 +110,37 @@ async function readAll(): Promise<OverviewResponse> {
       todosAvailable:
         overview.github.openPulls !== null && overview.github.openIssues !== null,
       todosReason: overview.github.reason,
+      // The session half of completeness (Codex, PR #41 round 3). Without
+      // it, tools whose logs were unreadable produced a ranking that
+      // claimed to be complete — and with no GitHub items that renders as
+      // "no recent session to resume", which asserts an absence of work
+      // from a read that never happened.
+      sessionsReason: summariseSessionFailures(recent),
     }),
     cachedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Why the resume candidates may be missing, or null when every tool was
+ * read cleanly. `missing` is not a failure — a tool that isn't installed
+ * has genuinely no sessions.
+ */
+function summariseSessionFailures(recent: RecentSessionsResult): string | null {
+  const broken = recent.tools.filter((t) => t.health === "error");
+  const partial = recent.tools.filter((t) => t.health === "ok" && t.reason);
+  const parts: string[] = [];
+  if (broken.length > 0) {
+    parts.push(
+      `${broken.map((t) => t.tool).join(", ")} logs could not be read, so recent sessions are missing from this ranking`,
+    );
+  }
+  if (partial.length > 0) {
+    parts.push(
+      `${partial.map((t) => t.tool).join(", ")} logs were read only partially`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 function refresh(): Promise<OverviewResponse> {

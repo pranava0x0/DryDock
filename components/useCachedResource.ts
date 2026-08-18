@@ -45,6 +45,36 @@ interface Entry<T> {
 /** Survives navigation; lost on reload. The fast path. */
 const memory = new Map<string, Entry<unknown>>();
 
+/**
+ * Per-URL ticket counter, module scope because the thing it protects is
+ * module scope (Codex, PR #41 round 3).
+ *
+ * The component-scoped `generation` ref guards React state. It cannot
+ * guard the shared cache, because the two answer different questions:
+ *
+ *  - "did my component go away?" — the payload is still perfectly valid,
+ *    and refusing to cache it is the original bug (slow endpoints, the
+ *    ones most likely to outlive their component, never cached at all).
+ *  - "has a newer request for this same URL already answered?" — the
+ *    payload is obsolete, and writing it would poison the cache for
+ *    everyone. A later navigation inside `maxAgeMs` would then promote
+ *    the stale copy and skip revalidation entirely.
+ *
+ * A ticket per URL separates them: every request takes one, and only a
+ * response still holding the highest ticket for its URL may write.
+ */
+const writeTicket = new Map<string, number>();
+
+function takeWriteTicket(url: string): number {
+  const next = (writeTicket.get(url) ?? 0) + 1;
+  writeTicket.set(url, next);
+  return next;
+}
+
+function holdsLatestTicket(url: string, ticket: number): boolean {
+  return (writeTicket.get(url) ?? 0) === ticket;
+}
+
 /** Survives reload. Namespaced so it can be cleared as a group. */
 const STORAGE_PREFIX = "drydock:cache:";
 
@@ -278,6 +308,9 @@ export function useCachedResource<T>(
     async (polls: number): Promise<void> => {
       const gen = generation.current;
       const current = () => generation.current === gen;
+      // Ordering ticket for the shared cache, scoped to the URL rather
+      // than to this component.
+      const ticket = takeWriteTicket(url);
       setInFlight(true);
       const controller = new AbortController();
       const abortTimer = setTimeout(
@@ -309,8 +342,14 @@ export function useCachedResource<T>(
         // git sweep, never once populated the cache while `/api/analytics`
         // always did. Every tab switch back re-paid the whole read.
         const next: Entry<T> = { data: body as T, at: Date.now() };
-        memory.set(url, next);
-        if (optionsRef.current.persist) writeStorage(url, next);
+        // Write only if no newer request for this URL has already answered.
+        // Deliberately NOT gated on `current()`: an unmounted component's
+        // response is still a valid payload and must reach the cache, which
+        // is the whole point of writing before the React guard.
+        if (holdsLatestTicket(url, ticket)) {
+          memory.set(url, next);
+          if (optionsRef.current.persist) writeStorage(url, next);
+        }
 
         if (!current()) return;
         setEntry(next);

@@ -306,13 +306,22 @@ async function scanTool(
 
   const sessions: RecentSession[] = [];
   let filesRead = 0;
+  let readFailures = 0;
   for (const file of chosen) {
-    filesRead += 1;
     try {
       const session = await parse(file);
       if (session) sessions.push(session);
+      // Counted only on success (Codex, PR #41 round 3). Incrementing
+      // before the parse meant `filesRead` reported files we had *tried*,
+      // so the footer could claim "40 logs read" when every open had
+      // failed — a count that describes the attempt rather than the result
+      // is the same confident-wrong-value trap in miniature.
+      filesRead += 1;
     } catch {
-      // One unreadable log must not blank the other 39.
+      // One unreadable log must not blank the other 39 — but it must not
+      // vanish either. A file can stat fine and still fail to open: per-file
+      // permissions, or it was deleted between the walk and the read.
+      readFailures += 1;
     }
   }
 
@@ -320,19 +329,44 @@ async function scanTool(
     sessions,
     status: {
       tool,
-      health: "ok",
+      // Every selected log failing to open is an error, not an empty
+      // window: `filesRead === 0` otherwise renders as "nothing in window
+      // · last used 27d ago", which is a confident claim about your
+      // activity built on zero successful reads.
+      health: filesRead === 0 && readFailures > 0 ? "error" : "ok",
       lastActiveAt,
       filesRead,
       skipped: inWindow.length - chosen.length,
-      // Some files were read, but a nested directory refused traversal —
-      // the result is real but incomplete, and saying so is the difference
-      // between a partial answer and a confident one.
-      reason:
-        walkFailures.length > 0
-          ? `${walkFailures.length} director${walkFailures.length === 1 ? "y" : "ies"} could not be read (${walkFailures[0]})`
-          : null,
+      // The result is real but incomplete when either a nested directory
+      // refused traversal or an individual log refused to open. Saying so
+      // is the difference between a partial answer and a confident one.
+      reason: partialReason(walkFailures, readFailures),
     },
   };
+}
+
+/**
+ * One sentence naming everything that went unread, or null when nothing
+ * did. Both failure kinds are reported because they are invisible in
+ * different ways: a skipped directory removes sessions you never knew
+ * existed, a failed open removes one you might be looking for.
+ */
+function partialReason(
+  walkFailures: string[],
+  readFailures: number,
+): string | null {
+  const parts: string[] = [];
+  if (walkFailures.length > 0) {
+    parts.push(
+      `${walkFailures.length} director${walkFailures.length === 1 ? "y" : "ies"} could not be read (${walkFailures[0]})`,
+    );
+  }
+  if (readFailures > 0) {
+    parts.push(
+      `${readFailures} log${readFailures === 1 ? "" : "s"} could not be opened`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /* ─────────────────────────── Claude Code ─────────────────────────── */

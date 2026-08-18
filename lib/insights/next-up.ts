@@ -75,6 +75,17 @@ export interface NextUpInput {
   todos: OverviewTodo[];
   todosAvailable: boolean;
   todosReason: string | null;
+  /**
+   * Why the session list may be incomplete, or null when it is whole
+   * (Codex, PR #41 round 3).
+   *
+   * Completeness used to be derived from the GitHub counts alone, so if
+   * every tool's logs were unreadable but `gh` answered fine, the ranking
+   * claimed to be complete. With no GitHub items that produced the worst
+   * possible sentence — "no recent session to resume" — asserting the
+   * absence of work from a read that never happened.
+   */
+  sessionsReason?: string | null;
   /** Injected so tests are not clock-dependent. */
   now?: Date;
   limit?: number;
@@ -152,12 +163,21 @@ export function buildNextUp(input: NextUpInput): NextUp {
     });
   }
 
+  // Either input being incomplete makes the ranking incomplete. They are
+  // reported together so the user learns everything that went unread, not
+  // just the first thing.
+  const reasons: string[] = [];
+  if (!input.todosAvailable) {
+    reasons.push(
+      input.todosReason ??
+        "GitHub could not be read, so open PRs and issues are missing from this ranking",
+    );
+  }
+  if (input.sessionsReason) reasons.push(input.sessionsReason);
+
   return {
     items: items.slice(0, limit),
-    partial: !input.todosAvailable,
-    reason: input.todosAvailable
-      ? null
-      : (input.todosReason ??
-        "GitHub could not be read, so open PRs and issues are missing from this ranking"),
+    partial: reasons.length > 0,
+    reason: reasons.length > 0 ? reasons.join(" · ") : null,
   };
 }

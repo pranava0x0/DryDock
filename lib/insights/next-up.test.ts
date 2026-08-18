@@ -161,3 +161,46 @@ describe("buildNextUp", () => {
     expect(result.items[0].why).not.toContain("null");
   });
 });
+
+describe("session-read failures make the ranking partial", () => {
+  it("is partial when the logs could not be read, even with GitHub healthy", () => {
+    // The bad sentence this prevents: "Nothing queued up. No recent session
+    // to resume" — asserting an absence of work from a read that never ran.
+    const result = buildNextUp({
+      sessions: [],
+      todos: [],
+      todosAvailable: true,
+      todosReason: null,
+      sessionsReason: "claude logs could not be read",
+      now: NOW,
+    });
+    expect(result.partial).toBe(true);
+    expect(result.reason).toContain("claude");
+  });
+
+  it("reports both failures rather than only the first", () => {
+    const result = buildNextUp({
+      sessions: [],
+      todos: [],
+      todosAvailable: false,
+      todosReason: "gh not authenticated",
+      sessionsReason: "codex logs were read only partially",
+      now: NOW,
+    });
+    expect(result.reason).toContain("gh not authenticated");
+    expect(result.reason).toContain("codex");
+  });
+
+  it("stays complete when sessions were read cleanly", () => {
+    const result = buildNextUp({
+      sessions: [session()],
+      todos: [],
+      todosAvailable: true,
+      todosReason: null,
+      sessionsReason: null,
+      now: NOW,
+    });
+    expect(result.partial).toBe(false);
+    expect(result.reason).toBeNull();
+  });
+});

@@ -338,3 +338,39 @@ describe("traversal failures are never reported as absence", () => {
     }
   });
 });
+
+describe("per-file read failures are counted, not swallowed", () => {
+  it("does not count a log it failed to open as read", async () => {
+    const claudeRoot = roots().claudeRoot;
+    const good = join(claudeRoot, "e", "good.jsonl");
+    const bad = join(claudeRoot, "e", "bad.jsonl");
+    writeLog(good, [{ type: "user", timestamp: ago(1).toISOString(), cwd: "/p/A", message: { content: "ok" } }], ago(1));
+    writeLog(bad, [{ type: "user", timestamp: ago(1).toISOString(), cwd: "/p/B", message: { content: "nope" } }], ago(1));
+    chmodSync(bad, 0o000);
+    try {
+      const result = await readRecentSessions({ ...roots() });
+      const claude = result.tools.find((t) => t.tool === "claude");
+      // "2 logs read" when one could not be opened is a count describing
+      // the attempt rather than the result.
+      expect(claude?.filesRead).toBe(1);
+      expect(claude?.reason).toMatch(/could not be opened/);
+      expect(result.sessions).toHaveLength(1);
+    } finally {
+      chmodSync(bad, 0o644);
+    }
+  });
+
+  it("reports error, not an empty window, when every log fails to open", async () => {
+    const bad = join(roots().claudeRoot, "e", "only.jsonl");
+    writeLog(bad, [{ type: "user", timestamp: ago(1).toISOString(), cwd: "/p/A", message: { content: "x" } }], ago(1));
+    chmodSync(bad, 0o000);
+    try {
+      const result = await readRecentSessions({ ...roots() });
+      const claude = result.tools.find((t) => t.tool === "claude");
+      expect(claude?.health).toBe("error");
+      expect(claude?.filesRead).toBe(0);
+    } finally {
+      chmodSync(bad, 0o644);
+    }
+  });
+});
