@@ -5,10 +5,11 @@ import { commitSummaryFor } from "@/lib/projects/commit-stats";
 import { listProjects } from "@/lib/db/projects";
 import { readClaudeUsage } from "@/lib/providers/claude-usage";
 import { buildOverview, type Overview } from "@/lib/insights/overview";
+import { readRecentSessions } from "@/lib/connectors/recent-sessions";
 import {
-  readRecentSessions,
+  SESSION_TOOLS,
   type RecentSessionsResult,
-} from "@/lib/connectors/recent-sessions";
+} from "@/lib/connectors/recent-sessions.types";
 import { buildNextUp, type NextUp } from "@/lib/insights/next-up";
 
 export const runtime = "nodejs";
@@ -69,7 +70,10 @@ async function readAll(): Promise<OverviewResponse> {
     readRecentSessions().catch(
       (err: Error): RecentSessionsResult => ({
         sessions: [],
-        tools: (["claude", "codex", "antigravity"] as const).map((tool) => ({
+        // From the shared list, not a second copy of it — a fourth tool
+        // would otherwise be reported as healthy-but-absent on this path
+        // while every other path knew about it.
+        tools: SESSION_TOOLS.map((tool) => ({
           tool,
           health: "error" as const,
           lastActiveAt: null,

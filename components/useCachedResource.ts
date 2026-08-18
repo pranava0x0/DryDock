@@ -214,11 +214,28 @@ export function useCachedResource<T>(
   });
   optionsRef.current = { shouldPoll, pollIntervalMs, maxPolls, persist, timeoutMs };
 
-  const cancelled = useRef(false);
+  /**
+   * Monotonic generation counter, incremented on every cleanup.
+   *
+   * This replaced a plain `cancelled` boolean, which was subtly wrong: the
+   * ref is shared across URLs, and a re-run of the effect set it back to
+   * `false` — *un-cancelling* the request the cleanup had just cancelled.
+   * Switching Flow's window from 90d to 30d left the older, slower 90d
+   * response free to resolve last and write itself into the 30d view.
+   * Wrong numbers under a correct-looking selector, which is the failure
+   * mode this codebase is least willing to ship.
+   *
+   * Each `load` captures the generation it started in and compares after
+   * every await, so a superseded request can never win a race against the
+   * one that replaced it.
+   */
+  const generation = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const load = useCallback(
     async (polls: number): Promise<void> => {
+      const gen = generation.current;
+      const current = () => generation.current === gen;
       setInFlight(true);
       const controller = new AbortController();
       const abortTimer = setTimeout(
@@ -236,13 +253,13 @@ export function useCachedResource<T>(
           throw new Error(message);
         }
 
-        // Populate the shared cache BEFORE the cancellation check.
+        // Populate the shared cache BEFORE the generation check.
         //
-        // `cancelled` means "this component went away", which is a reason
-        // to skip the setState calls below — React would warn, and there
-        // is no longer anything to render into. It is NOT a reason to
-        // throw away a payload that arrived intact: the cache is module
-        // scope, shared with whatever mounts next.
+        // Being superseded is a statement about this component's needs —
+        // a reason to skip the setState calls below, since there may be
+        // nothing to render into. It is NOT a reason to discard a payload
+        // that arrived intact: the cache is module scope, keyed by URL,
+        // and shared with whatever mounts next.
         //
         // Caching after the guard made the cache useless for exactly the
         // requests that needed it most. The slower the endpoint, the more
@@ -253,7 +270,7 @@ export function useCachedResource<T>(
         memory.set(url, next);
         if (optionsRef.current.persist) writeStorage(url, next);
 
-        if (cancelled.current) return;
+        if (!current()) return;
         setEntry(next);
         setError(null);
 
@@ -265,7 +282,7 @@ export function useCachedResource<T>(
       } catch (err) {
         // A failed refresh must not discard good cached data — the panel
         // keeps rendering what it has and the error rides alongside.
-        if (!cancelled.current) {
+        if (current()) {
           const aborted = (err as Error).name === "AbortError";
           setError(
             aborted
@@ -275,15 +292,17 @@ export function useCachedResource<T>(
         }
       } finally {
         clearTimeout(abortTimer);
-        if (!cancelled.current) setInFlight(false);
+        // Also generation-guarded: a superseded request finishing must not
+        // clear the in-flight flag out from under the request that
+        // replaced it, or the UI would stop saying "refreshing" while a
+        // refresh is still running.
+        if (current()) setInFlight(false);
       }
     },
     [url],
   );
 
   useEffect(() => {
-    cancelled.current = false;
-
     let cached = memory.get(url) as Entry<T> | undefined;
     // Runs after hydration, so promoting the persisted copy here is safe
     // where doing it during render was not. This is what makes a full
@@ -304,7 +323,10 @@ export function useCachedResource<T>(
     // requests and paints instantly.
     if (!fresh) void load(0);
     return () => {
-      cancelled.current = true;
+      // Bumping the generation is what retires every request started in
+      // this pass. It is never reset, so an in-flight response can only
+      // ever find itself stale — never un-cancelled by a later mount.
+      generation.current += 1;
       if (timer.current) clearTimeout(timer.current);
     };
   }, [url, maxAgeMs, load, persist]);

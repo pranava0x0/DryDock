@@ -97,24 +97,69 @@ export function FlowTab() {
    */
   const { data, error, loading, stale } = useCachedResource<FlowSummary>(
     `/api/flow?window=${windowDays}`,
-    { maxAgeMs: 120_000 },
+    {
+      maxAgeMs: 120_000,
+      // The default 20s deadline is shorter than this endpoint's own cold
+      // read (16–25s for 90d, more for 1y), so it would fire on a cold
+      // sweep every time and report a timeout for a request that was
+      // working. A deadline has to be longer than the thing it is
+      // watching.
+      timeoutMs: 90_000,
+    },
+  );
+
+  /* The window selector renders in every state, including the error one.
+     It used to be inside the success branch, so a failed or timed-out read
+     replaced the whole tab with a message and took the buttons with it —
+     leaving no way to pick a different window, i.e. no way to recover
+     without a page reload. */
+  const selector = (
+    <div className="flex gap-2">
+      {WINDOWS.map((days) => (
+        <button
+          key={days}
+          type="button"
+          onClick={() => setWindowDays(days)}
+          className={`tap rounded-full px-3 text-xs font-medium transition ${
+            windowDays === days
+              ? "bg-kraken-ice text-kraken-deep"
+              : "border border-kraken-boundless text-zinc-300 hover:bg-kraken-boundless/30"
+          }`}
+        >
+          {days === 365 ? "1y" : `${days}d`}
+        </button>
+      ))}
+      {/* Cached numbers are shown immediately; this says when they're
+          being re-read, so a stale figure never passes as a live one. */}
+      {stale ? (
+        <span className="dd-pulse ml-auto self-center text-xs text-kraken-shadow">
+          refreshing
+        </span>
+      ) : null}
+    </div>
   );
 
   if (loading) {
     return (
-      <p className="dd-pulse text-sm text-kraken-shadow">
-        Reading your git history…
-      </p>
+      <div className="space-y-3">
+        {selector}
+        <p className="dd-pulse text-sm text-kraken-shadow">
+          Reading your git history…
+        </p>
+      </div>
     );
   }
   if (error && !data) {
     return (
-      <p
-        role="alert"
-        className="rounded-md border border-kraken-alert/30 bg-kraken-alert/10 px-3 py-2 text-sm text-kraken-alert"
-      >
-        {error}
-      </p>
+      <div className="space-y-3">
+        {selector}
+        <p
+          role="alert"
+          className="rounded-md border border-kraken-alert/30 bg-kraken-alert/10 px-3 py-2 text-sm text-kraken-alert"
+        >
+          {error}
+        </p>
+      </div>
     );
   }
   if (!data) return null;
@@ -123,29 +168,14 @@ export function FlowTab() {
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
-        {WINDOWS.map((days) => (
-          <button
-            key={days}
-            type="button"
-            onClick={() => setWindowDays(days)}
-            className={`tap rounded-full px-3 text-xs font-medium transition ${
-              windowDays === days
-                ? "bg-kraken-ice text-kraken-deep"
-                : "border border-kraken-boundless text-zinc-300 hover:bg-kraken-boundless/30"
-            }`}
-          >
-            {days === 365 ? "1y" : `${days}d`}
-          </button>
-        ))}
-        {/* Cached numbers are shown immediately; this says when they're
-            being re-read, so a stale figure never passes as a live one. */}
-        {stale ? (
-          <span className="dd-pulse ml-auto self-center text-xs text-kraken-shadow">
-            refreshing
-          </span>
-        ) : null}
-      </div>
+      {selector}
+      {error ? (
+        // A failed refresh over good cached data — the figures below are
+        // real, just older than intended.
+        <p className="text-xs text-kraken-alert" role="alert">
+          Refresh failed: {error}. Showing the last good read.
+        </p>
+      ) : null}
 
       {data.reason ? (
         <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
