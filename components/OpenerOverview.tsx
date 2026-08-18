@@ -69,6 +69,13 @@ export function OpenerOverview() {
     // still free — only surviving a reload is given up, and only for the
     // one payload that contains transcript text.
     persist: false,
+    // Longer than this endpoint's own cold read. `/api/overview` fans out
+    // to `readClaudeUsage()`, which on a genuinely cold process is the
+    // ~25s rolling-window scan — so the 20s default fired on the first
+    // load after a restart and put "Timed out after 20s" at the top of the
+    // dashboard for a request that was working fine. A deadline shorter
+    // than the thing it is watching manufactures its own failures.
+    timeoutMs: 90_000,
   });
 
   if (loading) return <OpenerSkeleton />;
