@@ -190,6 +190,12 @@ function ToolFootnote({ status, now }: { status: ToolStatus; now: number }) {
       {name}: {status.filesRead} log{status.filesRead === 1 ? "" : "s"} read
       {/* A cap that was hit is a floor, not a total. */}
       {status.skipped > 0 ? ` · ${status.skipped} more not opened` : ""}
+      {/* A read that partly failed is not a complete read. `health` is
+          still "ok" because real sessions came back, so the reason is the
+          only thing distinguishing this from a whole answer. */}
+      {status.reason ? (
+        <span className="text-amber-300"> · {status.reason}</span>
+      ) : null}
     </span>
   );
 }

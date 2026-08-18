@@ -398,6 +398,17 @@ export function useCachedResource<T>(
 
   const refresh = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
+    // Retire whatever is already in flight for this URL before starting
+    // another (Codex, PR #41 round 2).
+    //
+    // Without this, an explicit refresh shares a generation with the
+    // request it is meant to supersede, so the OLDER response can land
+    // last and overwrite both React state and the memory cache. The case
+    // that bites: create a project while the initial /api/projects read is
+    // still running — the refresh fetches the list including the new row,
+    // the slower original returns the list without it, and the row you
+    // just created disappears until something else triggers a read.
+    generation.current += 1;
     void load(0);
   }, [load]);
 

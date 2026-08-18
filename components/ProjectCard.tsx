@@ -24,9 +24,23 @@ export function ProjectCard({ project, taskCounts }: ProjectCardProps) {
    * real (empty) task list lives. The row returns the moment there is
    * something to count — which is exactly when it starts being worth the
    * space. Same idiom as the `failed > 0` line below, applied to the group.
+   *
+   * **Every status has to be in this sum, including `queued`** (Codex, PR
+   * #41). `queued` is a real status persisted in SQLite — it is where the
+   * concurrency cap parks a task, and it survives a restart. Leaving it out
+   * meant a project whose only task was waiting behind the cap rendered as
+   * having no task history at all: work that exists, hidden because it
+   * hadn't started. `queued` is surfaced in its own count below rather than
+   * folded into `pending`, since "waiting for a slot" and "not dispatched
+   * yet" are different answers to "why isn't this running".
    */
   const hasTaskActivity =
-    taskCounts.pending + activeCount + taskCounts.done + taskCounts.failed > 0;
+    taskCounts.pending +
+      taskCounts.queued +
+      activeCount +
+      taskCounts.done +
+      taskCounts.failed >
+    0;
   return (
     <Link
       href={`/project/${project.id}`}
@@ -69,6 +83,13 @@ export function ProjectCard({ project, taskCounts }: ProjectCardProps) {
           <dd className="font-medium text-emerald-300">{taskCounts.done}</dd>
           <span>done</span>
         </div>
+        {taskCounts.queued > 0 ? (
+          <div className="flex items-center gap-1">
+            <dt className="sr-only">Queued</dt>
+            <dd className="font-medium text-kraken-ice">{taskCounts.queued}</dd>
+            <span>queued</span>
+          </div>
+        ) : null}
         {taskCounts.failed > 0 ? (
           <div className="flex items-center gap-1">
             <dt className="sr-only">Failed</dt>

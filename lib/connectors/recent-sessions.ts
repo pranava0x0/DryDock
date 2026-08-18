@@ -198,22 +198,33 @@ function isoOrNull(value: unknown): string | null {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
-/** Recursive stat-only walk. Cheap: no file contents are read. */
+/**
+ * Recursive stat-only walk. Cheap: no file contents are read.
+ *
+ * Traversal failures are collected rather than swallowed (Codex, PR #41).
+ * A `readdir` that fails on a permission-protected directory used to
+ * return an empty list, which `scanTool` then reported as `missing` — the
+ * tool rendered as "no logs on this machine" when the truth was "its logs
+ * could not be read". That is precisely the unread-vs-zero rule this file's
+ * own header sets out, broken one function below it.
+ */
 async function walkFiles(
   root: string,
   accept: (path: string) => boolean,
   out: FileEntry[] = [],
-): Promise<FileEntry[]> {
+  failures: string[] = [],
+): Promise<{ files: FileEntry[]; failures: string[] }> {
   let entries;
   try {
     entries = await fs.readdir(root, { withFileTypes: true });
-  } catch {
-    return out;
+  } catch (err) {
+    failures.push(`${root}: ${(err as Error).message}`);
+    return { files: out, failures };
   }
   for (const entry of entries) {
     const path = join(root, entry.name);
     if (entry.isDirectory()) {
-      await walkFiles(path, accept, out);
+      await walkFiles(path, accept, out, failures);
     } else if (accept(path)) {
       try {
         const st = await fs.stat(path);
@@ -223,7 +234,7 @@ async function walkFiles(
       }
     }
   }
-  return out;
+  return { files: out, failures };
 }
 
 interface ToolScan {
@@ -257,12 +268,26 @@ async function scanTool(
   }
 
   let all: FileEntry[];
+  let walkFailures: string[];
   try {
-    all = await walkFiles(root, accept);
+    const walked = await walkFiles(root, accept);
+    all = walked.files;
+    walkFailures = walked.failures;
   } catch (err) {
     return {
       sessions: [],
       status: emptyStatus(tool, "error", (err as Error).message),
+    };
+  }
+
+  // A root that exists but could not be traversed is an ERROR, not an
+  // absence (Codex, PR #41). Reporting it as `missing` told the user the
+  // tool had no logs when the truth was that we were not allowed to look —
+  // the unread-rendered-as-zero failure this file's header forbids.
+  if (all.length === 0 && walkFailures.length > 0) {
+    return {
+      sessions: [],
+      status: emptyStatus(tool, "error", walkFailures[0]),
     };
   }
   if (all.length === 0) {
@@ -299,7 +324,13 @@ async function scanTool(
       lastActiveAt,
       filesRead,
       skipped: inWindow.length - chosen.length,
-      reason: null,
+      // Some files were read, but a nested directory refused traversal —
+      // the result is real but incomplete, and saying so is the difference
+      // between a partial answer and a confident one.
+      reason:
+        walkFailures.length > 0
+          ? `${walkFailures.length} director${walkFailures.length === 1 ? "y" : "ies"} could not be read (${walkFailures[0]})`
+          : null,
     },
   };
 }

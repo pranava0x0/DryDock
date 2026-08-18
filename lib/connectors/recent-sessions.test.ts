@@ -1,5 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  utimesSync,
+  chmodSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -287,5 +294,47 @@ describe("readRecentSessions", () => {
     const { sessions } = await readRecentSessions(roots());
     expect(sessions).toHaveLength(1);
     expect(sessions[0].id).toBe("sweep-1");
+  });
+});
+
+describe("traversal failures are never reported as absence", () => {
+  it("reports an unreadable root as error, not 'no logs on this machine'", async () => {
+    // The distinction that matters: `missing` renders as "this tool isn't
+    // installed", which is a confident wrong answer when the truth is that
+    // the directory refused to be read.
+    const claudeRoot = join(root, "claude", "projects");
+    mkdirSync(claudeRoot, { recursive: true });
+    chmodSync(claudeRoot, 0o000);
+    try {
+      const result = await readRecentSessions({ ...roots() });
+      const claude = result.tools.find((t) => t.tool === "claude");
+      expect(claude?.health).toBe("error");
+      expect(claude?.reason).toBeTruthy();
+    } finally {
+      chmodSync(claudeRoot, 0o755);
+    }
+  });
+
+  it("marks a partial read with a reason while still returning what it read", async () => {
+    const claudeRoot = roots().claudeRoot;
+    writeLog(
+      join(claudeRoot, "readable", "s.jsonl"),
+      [{ type: "user", timestamp: ago(1).toISOString(), cwd: "/p/A", message: { content: "found me" } }],
+      ago(1),
+    );
+    const blocked = join(claudeRoot, "blocked");
+    mkdirSync(blocked, { recursive: true });
+    chmodSync(blocked, 0o000);
+    try {
+      const result = await readRecentSessions({ ...roots() });
+      const claude = result.tools.find((t) => t.tool === "claude");
+      // Real sessions came back, so health stays ok — but it must say the
+      // answer is incomplete.
+      expect(claude?.health).toBe("ok");
+      expect(result.sessions).toHaveLength(1);
+      expect(claude?.reason).toMatch(/could not be read/);
+    } finally {
+      chmodSync(blocked, 0o755);
+    }
   });
 });
