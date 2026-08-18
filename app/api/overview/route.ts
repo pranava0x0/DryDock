@@ -100,7 +100,15 @@ async function readAll(): Promise<OverviewResponse> {
     nextUp: buildNextUp({
       sessions: recent.sessions,
       todos: overview.todos,
-      todosAvailable: !overview.todosUnavailable,
+      // Per-category, not per-source (Codex, PR #41). `todosUnavailable` is
+      // only true when *both* GitHub searches failed, so a run where the
+      // issue search errored and the PR search succeeded would have set
+      // `partial: false` and presented a ranking missing every issue as if
+      // it were the complete picture. That is DD-027's exact shape — one
+      // `status` standing in for N independent reads — reappearing in a new
+      // consumer. A count that came back `null` was never read.
+      todosAvailable:
+        overview.github.openPulls !== null && overview.github.openIssues !== null,
       todosReason: overview.github.reason,
     }),
     cachedAt: new Date().toISOString(),

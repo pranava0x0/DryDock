@@ -59,6 +59,17 @@ export interface FlowSummary {
   github: GithubWork | null;
   reason: string | null;
   generatedAt: string;
+  /**
+   * True when this payload was served stale while a rebuild runs behind it
+   * (Codex, PR #41).
+   *
+   * Without it the server half of stale-while-revalidate is the only half
+   * that exists: the client is handed old numbers with no way to tell, so
+   * it clears its own "refreshing" marker and never comes back for the
+   * rebuilt result. The figures then sit stale for as long as the tab
+   * stays mounted. Pair with `generatedAt` to say how old they are.
+   */
+  refreshing?: boolean;
 }
 
 export interface FlowSummaryOptions {
@@ -123,8 +134,13 @@ export async function buildFlowSummary(
       // still on screen. The next foreground call surfaces the failure.
       void refreshFlow(cacheKey, options).catch(() => {});
     }
-    return cache.value;
+    // Report whether a rebuild is actually running right now — including
+    // one started by an earlier request that hasn't landed yet, which is
+    // why this checks `inFlight` rather than just the staleness test above.
+    const refreshing = inFlight?.key === cacheKey;
+    return refreshing ? { ...cache.value, refreshing } : cache.value;
   }
+  // A cold build is awaited, so what it returns is fresh by definition.
   return refreshFlow(cacheKey, options);
 }
 

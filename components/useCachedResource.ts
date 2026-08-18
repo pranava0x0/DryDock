@@ -164,6 +164,34 @@ export interface CachedResourceOptions<T> {
  */
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+/**
+ * What the displayed entry should become when the effect runs.
+ *
+ * Extracted because this decision is where the bug was (Codex, PR #41) and
+ * because it is the only part of the hook testable without a DOM: the
+ * suite runs in `node`, so the React behaviour around it is verified in
+ * the browser instead.
+ *
+ * `undefined` means "leave the current entry alone" — distinct from
+ * `{next: null}`, which means "blank it", and the difference is the whole
+ * point. On a URL change with no cache hit the view MUST blank: continuing
+ * to show the previous URL's payload under the new selector is a wrong
+ * answer, where blanking is merely a delay.
+ */
+export function resolveDisplayedEntry<T>(args: {
+  urlChanged: boolean;
+  cached: Entry<T> | undefined;
+  current: Entry<T> | null;
+}): { next: Entry<T> | null } | undefined {
+  const { urlChanged, cached, current } = args;
+  // A different URL always re-points the view, including to nothing.
+  if (urlChanged) return { next: cached ?? null };
+  // Same URL: only fill a hole. Never overwrite a live entry with a cached
+  // one, or a just-arrived payload would be replaced by an older copy.
+  if (cached !== undefined && current === null) return { next: cached };
+  return undefined;
+}
+
 export function useCachedResource<T>(
   url: string,
   options: CachedResourceOptions<T> = {},
@@ -229,6 +257,20 @@ export function useCachedResource<T>(
    * every await, so a superseded request can never win a race against the
    * one that replaced it.
    */
+  /**
+   * Which URL the currently displayed entry belongs to. The effect compares
+   * against this to decide whether it is looking at a genuine URL change
+   * (re-point the view) or a re-run for the same URL (leave it alone).
+   */
+  const displayedUrl = useRef(url);
+
+  /**
+   * Mirrors `entry` for the effect to read without taking it as a
+   * dependency — depending on the value it also sets would re-run the
+   * effect on every payload.
+   */
+  const entryRef = useRef<Entry<T> | null>(null);
+
   const generation = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -313,9 +355,32 @@ export function useCachedResource<T>(
       if (stored) {
         memory.set(url, stored);
         cached = stored;
-        setEntry(stored);
       }
     }
+
+    // Re-point the displayed entry whenever the URL changes (Codex, PR #41).
+    //
+    // Without this the hook rendered whatever the *previous* URL had
+    // resolved to. The bad case is silent and permanent rather than
+    // transient: if the new URL already has a fresh in-memory entry, the
+    // fetch below is skipped too, so nothing ever corrects the view — pick
+    // 30d in Flow after visiting 90d and you keep reading 90d's numbers
+    // under a 30d selector, indefinitely.
+    //
+    // On a miss this deliberately sets `null`, which surfaces the loading
+    // state. Showing another window's figures is strictly worse than
+    // showing none: one is a delay, the other is a wrong answer.
+    const urlChanged = displayedUrl.current !== url;
+    const resolved = resolveDisplayedEntry<T>({
+      urlChanged,
+      cached,
+      current: entryRef.current,
+    });
+    if (urlChanged) {
+      displayedUrl.current = url;
+      setError(null);
+    }
+    if (resolved) setEntry(resolved.next);
 
     const fresh = cached !== undefined && Date.now() - cached.at < maxAgeMs;
     // A cache hit inside maxAgeMs skips the network entirely. This is the
@@ -335,6 +400,10 @@ export function useCachedResource<T>(
     if (timer.current) clearTimeout(timer.current);
     void load(0);
   }, [load]);
+
+  // Kept in step with what is actually rendered, so the effect can consult
+  // it without depending on it.
+  entryRef.current = entry;
 
   return {
     data: entry?.data ?? null,

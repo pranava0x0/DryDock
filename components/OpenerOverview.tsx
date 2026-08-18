@@ -57,6 +57,18 @@ export function OpenerOverview() {
     // true` and rebuilds behind it, so come back for the rebuilt payload
     // rather than sitting on old numbers under a permanent label.
     shouldPoll: (body) => body.refreshing === true,
+    // No sessionStorage for this one (Codex, PR #41). The payload now
+    // carries `recent.sessions[].lastPrompt` — verbatim excerpts of what
+    // the user typed into Claude Code, Codex and Antigravity. The reader
+    // that produces them states that prompt text is never persisted, and
+    // writing it to sessionStorage would have made that false: the text
+    // would outlive the document and stay recoverable for the rest of the
+    // browser session.
+    //
+    // The in-memory cache still applies, so navigating away and back is
+    // still free — only surviving a reload is given up, and only for the
+    // one payload that contains transcript text.
+    persist: false,
   });
 
   if (loading) return <OpenerSkeleton />;

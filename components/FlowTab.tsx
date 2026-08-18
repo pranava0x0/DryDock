@@ -47,6 +47,9 @@ interface FlowSummary {
   reposRead: number;
   root: string;
   reason: string | null;
+  generatedAt: string;
+  /** Server served this stale while rebuilding behind it. */
+  refreshing?: boolean;
 }
 
 /** design.md palette — agents share the provider hues. */
@@ -70,6 +73,17 @@ const AGENT_LABEL: Record<Agent, string> = {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WINDOWS = [30, 90, 365] as const;
+
+/** "just now" / "4m old" — coarse on purpose; precision here is noise. */
+function ageLabel(generatedAt: string): string {
+  const ms = Date.parse(generatedAt);
+  if (!Number.isFinite(ms)) return "";
+  const mins = Math.floor((Date.now() - ms) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m old`;
+  const hours = Math.floor(mins / 60);
+  return hours < 24 ? `${hours}h old` : `${Math.floor(hours / 24)}d old`;
+}
 
 function fmt(n: number): string {
   if (n < 1_000) return String(n);
@@ -105,6 +119,15 @@ export function FlowTab() {
       // working. A deadline has to be longer than the thing it is
       // watching.
       timeoutMs: 90_000,
+      // The client half of the server's SWR (Codex, PR #41). When
+      // /api/flow answers stale while rebuilding, come back for the
+      // rebuilt payload — otherwise the figures sit stale for as long as
+      // this tab stays mounted, with nothing on screen saying so. Bounded
+      // by the hook, and cleared on unmount.
+      shouldPoll: (body) => body.refreshing === true,
+      // The sweep is slow, so a rebuild takes a while; polling every 3s
+      // would just pile up no-op requests against it.
+      pollIntervalMs: 10_000,
     },
   );
 
@@ -131,9 +154,19 @@ export function FlowTab() {
       ))}
       {/* Cached numbers are shown immediately; this says when they're
           being re-read, so a stale figure never passes as a live one. */}
-      {stale ? (
+      {stale || data?.refreshing ? (
+        // `stale` = this client is refetching; `refreshing` = the server is
+        // rebuilding behind a stale answer. Either way the numbers below
+        // are not final, so say so rather than letting them read as live.
         <span className="dd-pulse ml-auto self-center text-xs text-kraken-shadow">
           refreshing
+        </span>
+      ) : data ? (
+        // Not refreshing: say how old the figures are instead of letting
+        // them imply "as of now". Cheap, and it makes staleness legible
+        // rather than something the user has to infer.
+        <span className="ml-auto self-center text-xs text-kraken-shadow">
+          {ageLabel(data.generatedAt)}
         </span>
       ) : null}
     </div>

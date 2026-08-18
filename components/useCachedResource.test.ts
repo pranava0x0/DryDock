@@ -144,3 +144,67 @@ describe("invalidateCachedResource", () => {
     expect(() => invalidateCachedResource("/api/backlog")).not.toThrow();
   });
 });
+
+describe("resolveDisplayedEntry", () => {
+  const entry = (data: string, at = 1) => ({ data, at });
+
+  it("blanks the view when the URL changes and nothing is cached", async () => {
+    const { resolveDisplayedEntry } = await loadModule();
+    // The bug this guards (Codex, PR #41): the hook kept rendering the
+    // previous URL's payload. Blanking costs a spinner; not blanking shows
+    // 90d's figures under a 30d selector.
+    expect(
+      resolveDisplayedEntry({
+        urlChanged: true,
+        cached: undefined,
+        current: entry("90d"),
+      }),
+    ).toEqual({ next: null });
+  });
+
+  it("switches to the new URL's cached payload when it has one", async () => {
+    const { resolveDisplayedEntry } = await loadModule();
+    // The worst variant: a fresh cache hit also skips the fetch, so
+    // nothing downstream would ever have corrected the view.
+    expect(
+      resolveDisplayedEntry({
+        urlChanged: true,
+        cached: entry("30d"),
+        current: entry("90d"),
+      }),
+    ).toEqual({ next: entry("30d") });
+  });
+
+  it("leaves a live entry alone when the URL has not changed", async () => {
+    const { resolveDisplayedEntry } = await loadModule();
+    expect(
+      resolveDisplayedEntry({
+        urlChanged: false,
+        cached: entry("stale"),
+        current: entry("live"),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("fills a hole on the same URL, e.g. a promoted sessionStorage copy", async () => {
+    const { resolveDisplayedEntry } = await loadModule();
+    expect(
+      resolveDisplayedEntry({
+        urlChanged: false,
+        cached: entry("restored"),
+        current: null,
+      }),
+    ).toEqual({ next: entry("restored") });
+  });
+
+  it("does nothing on the same URL with no cache and nothing shown", async () => {
+    const { resolveDisplayedEntry } = await loadModule();
+    expect(
+      resolveDisplayedEntry({
+        urlChanged: false,
+        cached: undefined,
+        current: null,
+      }),
+    ).toBeUndefined();
+  });
+});
