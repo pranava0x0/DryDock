@@ -1544,3 +1544,182 @@ descriptions were edited this run — nothing had a count that moved.
   of a long-dead process, and it was actually a ~60-second rebuild window caused
   by this run one minute earlier. One `stat` on the file in the error message,
   and one re-probe, turned a wrong diagnosis into an accurate one.
+
+## 2026-08-18 — eleventh run
+
+Two halves. The 06:0x half got as far as the sweep and then **wedged on Apple
+Notes for the rest of the morning**; the run was restarted at 21:49 and finished
+there. The morning half's NEW section was computed, written to the state file,
+and lost with the session — see "What the interruption cost" below for what is
+and isn't recoverable.
+
+The evening half's real output was not the sweep at all. It was a chain that
+started with a one-word title edit and ended with a backlog row destroyed by the
+tool whose job is to repair backlog rows.
+
+### The sync wedge
+
+`POST /api/backlog/sync` did not return for **1039s**, then — after Notes.app was
+quit and relaunched at 07:46 — did not return for another **895s**. curl gave up
+both times (HTTP 000). A `GET` in the same window came back with
+`Apple Notes read failed: Command failed: osascript -e ... tell application
+"Notes"`. By 21:52 the identical POST returned 200 in **7.9s**, so it cleared on
+its own somewhere in the intervening hours. Relaunching Notes did not clear it,
+which is the detail worth keeping: the obvious remedy was tried and disproved.
+
+The cause is a missing option, and the mutex is what turns one stuck call into a
+total outage:
+
+- `lib/integrations/apple-notes.ts:287` and `:399` call
+  `execFileP("osascript", ["-e", script])` with no options object at all. Node's
+  `execFile` takes `timeout` + `killSignal`; without them a wedged Notes blocks
+  the promise indefinitely.
+- `lib/orchestrator/backlog.ts:244-252` shares a single `inFlightSync` promise
+  across every caller. That de-dupes concurrent syncs correctly, and it also
+  means that once the first sync is stuck, the dashboard's one-shot and
+  `/backlog`'s 30s interval both `await` a promise that will never settle.
+
+Filed as **p75 `ocY0120oTglmbSoJAXRMO`** with the fix: bound both `execFileP`
+calls and surface `ETIMEDOUT` distinctly, so the UI can say "Apple Notes is not
+responding" instead of spinning forever. A sync that never returns is not a
+failure the user can see; it is indistinguishable from a slow success.
+
+### The rename → phantom → dedupe → data loss chain
+
+This was meant to be routine bookkeeping. `roboticsleadership` had moved from 17
+open bot PRs to 23, so its task needed its count updated in the title.
+
+1. `PATCH /api/backlog/OuCH4PJ5nbwt-Y8CyhmkG {description}` — no phantom.
+2. `PATCH … {title}` `(7 queued)` → `(23 queued)`.
+3. `POST /api/backlog/sync` → `pulledNew: 1`. A new `source=apple-notes` row
+   `sdgEcotLLWlihvpMYSg9t` appeared carrying the **new** title, priority 0,
+   description null. This is **DD-020**, reproduced — and reproduced through the
+   plain API, where DD-020's write-up says "in the UI". The bug is in the sync
+   claim logic, not any UI path. Only the title edit triggered it; the
+   description edit in step 1 did not.
+4. `POST /api/backlog/dedupe` — the app's own sanctioned repair for exactly this
+   — returned `{removed:1, groupsMerged:1, deletedIds:["OuCH4PJ5nbwt-Y8CyhmkG"]}`.
+
+It deleted the original and kept the phantom. The survivor had **priority 0 and
+description null**; the priority-62 row with the full write-up was gone. Both
+fields were restored by hand onto `sdgEcotLLWlihvpMYSg9t`, and the row now
+carries a note saying so.
+
+`lib/orchestrator/backlog.ts:501-546` shows why, and it is two reasonable
+decisions that are wrong together:
+
+- The sort at `:515-520` makes `source === "apple-notes"` win unconditionally.
+  Defensible in isolation — AGENTS.md does treat the Notes-side row as the
+  id-stable one.
+- The merge at `:524-539` then rescues `status`, `project_id` and `task_id` from
+  the losing rows. `priority` and `description` are not on that list.
+
+So the keeper rule guarantees the emptier row survives, and the merge declines to
+rescue precisely the two fields that hold the content. Filed as **p85
+`bDCi-XmbwaJAEvOPWrnBz`** — extend the merge to `priority` (max) and
+`description` (longest non-null), the way `status` already takes the highest
+`STATUS_RANK`, plus a regression fixture pairing a priority-0/description-null
+apple-notes row against a populated manual one.
+
+Two smaller things fell out of this that are easy to miss:
+
+- The phantom inherits the **note's** date as `created_at` (2026-08-05T16:00Z
+  here), not the sync's. A phantom therefore does not sort to the top of a
+  newest-first list. It was found by set-differencing the before/after `id`
+  lists, and would not have been found by eyeballing recency.
+- `dedupe`'s response reports `deletedIds` and nothing about the survivor. The
+  call looked entirely successful — `removed:1, groupsMerged:1` is exactly what
+  a correct run prints. Reading the kept row was a separate deliberate step.
+
+DD-020 `VyKBllL039kBEyqzxbMKn` was updated with the API-level reproduction and a
+warning not to reach for `dedupe` as its cleanup.
+
+### The sweep itself
+
+One line under NEW SINCE LAST RUN, against 27 fingerprints:
+
+```
+DIRTY  FirstPassRx [main] 1 uncommitted
+```
+
+Not a finding. FirstPassRx's own scheduled run committed at **21:50:07**, sixty
+seconds after the sweep read the tree at 21:49 — `git status --porcelain` three
+minutes later was clean, and the reflog shows the commit landing inside the gap.
+The sweep caught a sibling automation mid-flight. Left alone; nothing to file,
+and no script change is warranted for a race that self-resolves within a minute.
+
+`FantasyGM` p60 `I1PFrsJFHJlAqOBtiqzaR` **closed as done**. PR #62 was closed
+without merging (that day's refresh data was dropped), and the routine recovered
+unattended: #63/#64/#65/#66 each opened ready and merged same-day on 08-15
+through 08-18. Worth restating what the closure does *not* cover — the 08-14
+lesson stands untouched: a FantasyGM routine that stops firing entirely produces
+no PR and therefore no sweep line, so absence is still undetectable here without
+a positive last-successful-run check.
+
+### What the interruption cost
+
+The 06:01 pass wrote its fingerprints before the session died, so **today's real
+NEW section was consumed and cannot be recovered** — the evening re-run diffed
+against 06:01, not against 08-14. What is recoverable comes from comparing the
+06:01 file against the 08-14 write-up: `botrun:roboticsleadership` moved
+`le20` → `le50` (17 → 23), which was certainly a NEW line this morning and is
+now folded into p62 above; and `pr:FantasyGM#62` disappeared, which is a removal
+and never shows in NEW anyway. A third delta — the count of behind-upstream rows
+going from 2 to 3 — is visible in the totals but the file does not say which repo
+joined, and that is not worth re-deriving by hand.
+
+The structural point: `daily-sweep.sh` saves state as a side effect of printing,
+so a run that is interrupted **after** the print has already spent its diff. The
+NEW section is a one-shot resource, not a queryable one.
+
+### Sync
+
+`pushedItems` **26** before filing, **28** after — 26 original, +2 filed, +1
+phantom, −1 destroyed by dedupe. `pulledNew` 0 and `pulledUpdated` 0 on the final
+pass, confirming no second phantom was minted by the restorative edits.
+`mirror.status` is **`disabled`**, reason `no tracker repo configured (Settings →
+Backlog mirror)` — the deliberately-off state, already filed as p65
+`3ZaLZvSMK2KqyW7dzg_SU`.
+
+### Deliberately skipped
+
+Everything in the full state that is already filed: 3 DryDock bot PRs (p72), 8
+dirty trees, 3 behind-upstream rows, vibe-coding-security's 55/98 divergence
+(p88), 7 no-upstream checkouts, 6 May test rows (p68), the stale squash-merged
+local branch (p50), 4 long-open personal PRs (p55). No server was started this
+run — one was already listening on 3000 and was reused, per p57's own
+recommendation; it was left running because it isn't ours to stop.
+
+### Lessons
+
+- **A repair tool that picks the wrong survivor is worse than no repair tool, and
+  its success output is identical either way.** `dedupe` returned
+  `{removed:1, groupsMerged:1}` — exactly what a correct collapse prints — while
+  having deleted the row with the content and kept the empty one. The keeper rule
+  and the field-merge list were written at different times and were never checked
+  against each other; each is defensible alone. Whenever a merge picks a winner
+  by *provenance*, enumerate every field that carries content and prove each one
+  survives, because the provenance rule will systematically favour whichever row
+  provenance made emptier.
+- **Verify a mutation by diffing the collection, not by reading the response.**
+  Both bugs today were invisible in their own return values: the phantom showed
+  only as `pulledNew: 1` (which is also what a legitimate pull prints), and the
+  data loss showed only as a `deletedIds` array that named the id you did not
+  expect *if* you happened to know which id was which. A before/after set-diff of
+  ids, and a re-read of the surviving row, found both in seconds.
+- **An unbounded `execFile` is an unbounded outage when it sits behind a shared
+  promise.** The missing `timeout` is a one-line omission; the `inFlightSync`
+  mutex is a deliberate, correct design. Together they convert "one AppleScript
+  call is slow" into "every sync in the process hangs forever", and the symptom
+  presents as a UI that spins rather than an error anyone can act on. Any mutex
+  that shares one promise across callers needs every await inside it bounded, or
+  the mutex becomes the blast radius.
+- **A diff-against-last-run is spent by printing it.** The morning pass saved its
+  fingerprints and then died; the NEW section it computed is simply gone, and the
+  evening re-run could only diff against the morning. A routine whose value is a
+  delta should either save state only after the delta has been *acted on*, or
+  write the delta somewhere durable at the moment it prints it.
+- **A dirty tree seen once is a snapshot, not a fact.** FirstPassRx's "1
+  uncommitted" was another automation mid-commit, and re-reading three minutes
+  later showed clean. Any finding that is a filesystem state rather than a
+  server-side record deserves a second read before it becomes a task.
