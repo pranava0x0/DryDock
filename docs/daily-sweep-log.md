@@ -1580,9 +1580,23 @@ total outage:
   `/backlog`'s 30s interval both `await` a promise that will never settle.
 
 Filed as **p75 `ocY0120oTglmbSoJAXRMO`** with the fix: bound both `execFileP`
-calls and surface `ETIMEDOUT` distinctly, so the UI can say "Apple Notes is not
-responding" instead of spinning forever. A sync that never returns is not a
-failure the user can see; it is indistinguishable from a slow success.
+calls, and detect the timeout by the shape Node actually produces so the UI can
+say "Apple Notes is not responding" instead of spinning forever. A sync that
+never returns is not a failure the user can see; it is indistinguishable from a
+slow success.
+
+One correction, caught by Codex on the PR and worth recording because the first
+draft of this entry would have sent the fix down the wrong branch: async
+`execFile` does **not** reject with `code === "ETIMEDOUT"` when its `timeout`
+fires. Measured on this machine — `execFileP("sleep", ["5"], {timeout: 400,
+killSignal: "SIGKILL"})` rejects with `code: null`, `errno: undefined`,
+`killed: true`, `signal: "SIGKILL"`, and the generic message `Command failed:
+sleep 5`. `ETIMEDOUT` is the **sync** family's (`execFileSync` sets
+`error.errno`). Branch on `err.killed === true` (optionally with `err.signal`
+matching the `killSignal` passed), or wrap the call and throw a tagged error of
+your own. Written literally, "surface ETIMEDOUT" would have fallen through to
+the generic error path and never produced the message it promised — the same
+looks-like-success shape as the bug it was fixing.
 
 ### The rename → phantom → dedupe → data loss chain
 
