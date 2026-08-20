@@ -1787,7 +1787,8 @@ The same staleness turned up in **p72 `1zaKLkronUXdwnsvl8zke`** — "Triage 3 ne
 Dependabot PRs on DryDock (#32-#34)" — found while spot-checking this entry's own
 citations, not from any NEW line. The live open set is **#32, #34, #42**: still
 three PRs, but **#33 was superseded by #42** when Dependabot regrouped the
-dev-dependencies group (#42 carries eslint-config-next 15.5.22 → 15.5.23 and
+dev-dependencies group — #33 was closed 2026-08-17 18:42 UTC and #42 opened the
+same day (#42 carries eslint-config-next 15.5.22 → 15.5.23 and
 postcss, now also `@types/node` 26.1.2 → 26.2.0). That matters more than a count
 being off, because p72's closing line read *"merge order #32 -> #33 together
 (paired versions)"* — and #33 no longer exists. The DD-016 lockstep partner for
@@ -1838,7 +1839,9 @@ class item and not worth a title edit for the reason above.
   stdout into the backlog row: ANSI escape codes, an interactive ESLint prompt,
   and `added 412 packages, and audited 413`, with the real sentences spliced
   around them. Checked and repaired: `git status` clean (`npm ci` does not touch
-  `package-lock.json`), 346 packages present, and better-sqlite3 loads in a *fresh*
+  `package-lock.json`), `node_modules` repopulated (346 top-level entries against
+  npm's reported "added 412 packages" — the two count differently, scoped packages
+  nest), and better-sqlite3 loads in a *fresh*
   `node` process — it falls back to its shipped `prebuilds/`, so the missing
   `build/Release/*.node` that `--ignore-scripts` left behind is not fatal here.
   The running dev server was unaffected. The row was rewritten from a quoted
