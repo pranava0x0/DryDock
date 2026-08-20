@@ -1737,3 +1737,105 @@ recommendation; it was left running because it isn't ours to stop.
   uncommitted" was another automation mid-commit, and re-reading three minutes
   later showed clean. Any finding that is a filesystem state rather than a
   server-side record deserves a second read before it becomes a task.
+
+---
+
+## 2026-08-19 — twelfth run
+
+The quiet day the routine was designed for. **One line under NEW SINCE LAST RUN**
+against 28 fingerprints, and it was not a finding:
+
+```
+SYNC   Nuclear Deployment [main] 0 ahead / 2 behind upstream
+```
+
+Nuclear Deployment is clean, 0 ahead, and 2 behind because PRs #12 and #13
+(`BD layer: territories, allied buyers, and accordion UI`, and that session's
+scar-tissue commit) landed upstream. A plain `git pull --ff-only` fixes it, it is
+already covered by an open item, and touching other projects' checkouts remains
+outside this routine. Nothing was filed.
+
+### One existing item refreshed instead of a new one filed
+
+The NEW line pointed at p52 `3YnFTnd9BFBeWWlG24aju` — "5 local checkouts are
+behind upstream, all fast-forwardable" — whose description had gone stale since
+its 2026-08-06 filing. Verified each tree directly rather than trusting the
+sweep's summary line:
+
+| Checkout | Then (08-06) | Now (08-19) |
+|---|---|---|
+| FERC Document Analysis | 13 behind, 5 uncommitted | **14 behind**, 5 uncommitted |
+| Settle | 4 behind, clean | 4 behind, clean |
+| Robotics Leadership | *not listed* | **3 behind**, clean — newly behind |
+| Nuclear Deployment | 25 behind, clean | **2 behind**, clean |
+| FERC Show Cause Orders | 7 behind | **pulled — no longer behind** |
+| Personal Website | 6 behind | **pulled — no longer behind** |
+
+So it is **four** checkouts now, not five, with two dropping off and one joining.
+The description was rewritten to carry the current roster.
+
+**The title still says "5" and was deliberately left wrong.** DD-020's own
+write-up records that a plain `PATCH /api/backlog/<id> {title}` is the exact
+trigger for the phantom-duplicate bug, while a description-only PATCH is not.
+Correcting a headline count is not worth minting a phantom, so the accurate count
+lives in the description until DD-020 is fixed, and the description says so. This
+run is a second confirmation of that asymmetry: the description-only PATCH
+followed by a sync produced `pulledNew: 0` and a before/after id set-diff of
+28 → 28, nothing added, nothing removed.
+
+### Sync
+
+Two passes, both clean. `pushedItems` **28**, `pulledNew` **0**,
+`pulledUpdated` **0** both times; the first returned in **4s**, which is worth
+recording against yesterday's 1039s and 895s wedges — the unbounded-`osascript`
+bug (p75 `ocY0120oTglmbSoJAXRMO`) is still unfixed, so today's speed is the
+absence of the trigger, not the absence of the bug. `mirror.status` is
+**`disabled`**, reason `no tracker repo configured (Settings → Backlog mirror)`
+— the deliberately-off state, filed as p65 `3ZaLZvSMK2KqyW7dzg_SU`.
+
+No server was started: one was already listening on 3000 and `GET /api/backlog`
+returned 200, so it was reused per p57's recommendation and left running.
+
+### Deliberately skipped
+
+The entire full state, all of it already filed: 3 DryDock bot PRs (p72), 24
+roboticsleadership bot PRs (p62), 9 dirty trees, vibe-coding-security's 55/98
+divergence (p88), 7 no-upstream checkouts, 6 May test rows (p68), the stale
+squash-merged local branch (p50), 4 long-open personal PRs (p55). The
+roboticsleadership count moved 23 → 24, which is drift within an already-filed
+class item and not worth a title edit for the reason above.
+
+### Routine notes
+
+- **Step 1 failed on the first attempt and was transient.** `git pull` died after
+  120s with `Failed to connect to github.com port 443 after 323137 ms`. A
+  `curl https://github.com` seconds later returned 200 in **91ms** and the retried
+  pull succeeded immediately. A network failure at the top of the routine is worth
+  one retry with a probe before it becomes a finding — the same "observed once is
+  a snapshot" rule that applied to FirstPassRx's dirty tree yesterday.
+- **`timeout(1)` does not exist on macOS.** Three diagnostic commands died with
+  `command not found: timeout` before this was noticed. Use `curl --max-time`,
+  or `git -c http.lowSpeedLimit=... -c http.lowSpeedTime=...` for git over HTTP.
+  Sibling of the BSD-`find`-has-no-`-newermt` note from 08-12.
+- **Dev servers cannot be started from an unattended session.** `preview_start`
+  refuses outright ("nobody is present to approve the command"), so the launch
+  config is unavailable to this scheduled task. It did not matter today because a
+  server was already up, but on a day when nothing is listening on 3000 the Apple
+  Notes step of this routine cannot run at all. Worth knowing before it is
+  mistaken for a sync failure.
+
+### Lessons
+
+- **A stale roster inside an open item is invisible to a diff-against-last-run.**
+  The sweep's NEW section correctly reported "Nuclear Deployment 2 behind" and had
+  no way to report that two other checkouts had silently dropped off the item that
+  claimed them and a third had joined. Fingerprints track *current state*, which is
+  exactly right for surfacing change, and exactly blind to a filed description
+  drifting away from it. When a NEW line lands on an existing class item, re-read
+  that item's roster rather than only appending to it.
+- **When a known bug makes the obvious edit unsafe, write the correction into the
+  field that is safe and say why.** The honest fix for "5 local checkouts" is to
+  retitle it "4". DD-020 makes that specific keystroke mint a phantom row, so the
+  count was corrected in the description with an explicit note that the title is
+  knowingly wrong and why. A silently-wrong title is a trap; a wrong title carrying
+  its own explanation is a documented workaround.
