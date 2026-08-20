@@ -1737,3 +1737,149 @@ recommendation; it was left running because it isn't ours to stop.
   uncommitted" was another automation mid-commit, and re-reading three minutes
   later showed clean. Any finding that is a filesystem state rather than a
   server-side record deserves a second read before it becomes a task.
+
+---
+
+## 2026-08-19 — twelfth run
+
+The quiet day the routine was designed for. **One line under NEW SINCE LAST RUN**
+against 28 fingerprints, and it was not a finding:
+
+```
+SYNC   Nuclear Deployment [main] 0 ahead / 2 behind upstream
+```
+
+Nuclear Deployment is clean, 0 ahead, and 2 behind because PRs #12 and #13
+(`BD layer: territories, allied buyers, and accordion UI`, and that session's
+scar-tissue commit) landed upstream. A plain `git pull --ff-only` fixes it, it is
+already covered by an open item, and touching other projects' checkouts remains
+outside this routine. Nothing was filed.
+
+### Two existing items refreshed instead of a new one filed
+
+The NEW line pointed at p52 `3YnFTnd9BFBeWWlG24aju` — "5 local checkouts are
+behind upstream, all fast-forwardable" — whose description had gone stale since
+its 2026-08-06 filing. Verified each tree directly rather than trusting the
+sweep's summary line:
+
+| Checkout | Then (08-06) | Now (08-19) |
+|---|---|---|
+| FERC Document Analysis | 13 behind, 5 uncommitted | **14 behind**, 5 uncommitted |
+| Settle | 4 behind, clean | 4 behind, clean |
+| Robotics Leadership | *not listed* | **3 behind**, clean — newly behind |
+| Nuclear Deployment | 25 behind, clean | **2 behind**, clean |
+| FERC Show Cause Orders | 7 behind | **pulled — no longer behind** |
+| Personal Website | 6 behind | **pulled — no longer behind** |
+
+So it is **four** checkouts now, not five, with two dropping off and one joining.
+The description was rewritten to carry the current roster.
+
+**The title still says "5" and was deliberately left wrong.** DD-020's own
+write-up records that a plain `PATCH /api/backlog/<id> {title}` is the exact
+trigger for the phantom-duplicate bug, while a description-only PATCH is not.
+Correcting a headline count is not worth minting a phantom, so the accurate count
+lives in the description until DD-020 is fixed, and the description says so. This
+run is a second confirmation of that asymmetry: the description-only PATCH
+followed by a sync produced `pulledNew: 0` and a before/after id set-diff of
+28 → 28, nothing added, nothing removed.
+
+The same staleness turned up in **p72 `1zaKLkronUXdwnsvl8zke`** — "Triage 3 new
+Dependabot PRs on DryDock (#32-#34)" — found while spot-checking this entry's own
+citations, not from any NEW line. The live open set is **#32, #34, #42**: still
+three PRs, but **#33 was superseded by #42** when Dependabot regrouped the
+dev-dependencies group — #33 was closed 2026-08-17 18:42 UTC and #42 opened the
+same day (#42 carries eslint-config-next 15.5.22 → 15.5.23 and
+postcss, now also `@types/node` 26.1.2 → 26.2.0). That matters more than a count
+being off, because p72's closing line read *"merge order #32 -> #33 together
+(paired versions)"* — and #33 no longer exists. The DD-016 lockstep partner for
+#32 is now **#42**. Description refreshed, title left alone for the same DD-020
+reason.
+
+### Sync
+
+Four passes, all clean. `pushedItems` **28**, `pulledNew` **0**,
+`pulledUpdated` **0** every time, and an id set-diff of 28 → 28 across each pair
+with no title, status or priority drift. The first returned in **4s**, which is worth
+recording against yesterday's 1039s and 895s wedges — the unbounded-`osascript`
+bug (p75 `ocY0120oTglmbSoJAXRMO`) is still unfixed, so today's speed is the
+absence of the trigger, not the absence of the bug. `mirror.status` is
+**`disabled`**, reason `no tracker repo configured (Settings → Backlog mirror)`
+— the deliberately-off state, filed as p65 `3ZaLZvSMK2KqyW7dzg_SU`.
+
+No server was started: one was already listening on 3000 and `GET /api/backlog`
+returned 200, so it was reused per p57's recommendation and left running.
+
+### Deliberately skipped
+
+The entire full state, all of it already filed: 3 DryDock bot PRs (p72), 24
+roboticsleadership bot PRs (p62), 9 dirty trees, vibe-coding-security's 55/98
+divergence (p88), 7 no-upstream checkouts, 6 May test rows (p68), the stale
+squash-merged local branch (p50), 4 long-open personal PRs (p55). The
+roboticsleadership count moved 23 → 24, which is drift within an already-filed
+class item and not worth a title edit for the reason above.
+
+### Routine notes
+
+- **Step 1 failed on the first attempt and was transient.** `git pull` died after
+  120s with `Failed to connect to github.com port 443 after 323137 ms`. A
+  `curl https://github.com` seconds later returned 200 in **91ms** and the retried
+  pull succeeded immediately. A network failure at the top of the routine is worth
+  one retry with a probe before it becomes a finding — the same "observed once is
+  a snapshot" rule that applied to FirstPassRx's dirty tree yesterday.
+- **`timeout(1)` does not exist on macOS.** Three diagnostic commands died with
+  `command not found: timeout` before this was noticed. Use `curl --max-time`,
+  or `git -c http.lowSpeedLimit=... -c http.lowSpeedTime=...` for git over HTTP.
+  Sibling of the BSD-`find`-has-no-`-newermt` note from 08-12.
+- **A `python3 -c "…"` one-liner in zsh executed the backticked text inside the
+  string it was writing.** Writing p72's refreshed description with double quotes
+  around the Python source meant zsh ran command substitution on every backticked
+  fragment *in the prose* first — and that description is a runbook full of
+  commands. It actually executed `npm run lint`, `npm ci --ignore-scripts` and
+  `npm rebuild better-sqlite3` against this checkout, then PATCHed their captured
+  stdout into the backlog row: ANSI escape codes, an interactive ESLint prompt,
+  and `added 412 packages, and audited 413`, with the real sentences spliced
+  around them. Checked and repaired: `git status` clean (`npm ci` does not touch
+  `package-lock.json`), `node_modules` repopulated (346 top-level entries against
+  npm's reported "added 412 packages" — the two count differently, scoped packages
+  nest), and better-sqlite3 loads in a *fresh*
+  `node` process — it falls back to its shipped `prebuilds/`, so the missing
+  `build/Release/*.node` that `--ignore-scripts` left behind is not fatal here.
+  The running dev server was unaffected. The row was rewritten from a quoted
+  heredoc (`<<'EOF'`) with the text passed to Python as a file argument, and
+  re-verified clean of escapes and npm output. **Never interpolate prose into a
+  double-quoted shell string — pass it as a file or a quoted heredoc.** The
+  damage was recoverable here only by luck; the same slip on a runbook containing
+  a destructive command would not have been.
+
+- **Dev servers cannot be started from an unattended session.** `preview_start`
+  refuses outright ("nobody is present to approve the command"), so the launch
+  config is unavailable to this scheduled task. It did not matter today because a
+  server was already up, but on a day when nothing is listening on 3000 the Apple
+  Notes step of this routine cannot run at all. Worth knowing before it is
+  mistaken for a sync failure.
+
+### Lessons
+
+- **A stale roster inside an open item is invisible to a diff-against-last-run.**
+  The sweep's NEW section correctly reported "Nuclear Deployment 2 behind" and had
+  no way to report that two other checkouts had silently dropped off the item that
+  claimed them and a third had joined. Fingerprints track *current state*, which is
+  exactly right for surfacing change, and exactly blind to a filed description
+  drifting away from it. When a NEW line lands on an existing class item, re-read
+  that item's roster rather than only appending to it.
+- **Text that documents commands is executable text.** The p72 row is a runbook —
+  its value is that it spells out `npm ci --ignore-scripts` and the rest — and
+  putting that prose inside a double-quoted shell string handed those exact
+  commands to zsh. The failure is not "I forgot to escape something"; it is that
+  the *more useful* a stored instruction is, the more dangerous it is to move
+  around through a shell. Any content whose whole point is that it contains
+  commands must travel as a file or a quoted heredoc, never as an interpolated
+  argument. It also silently corrupted the data it was writing, so the wrong text
+  landed and the PATCH still reported success — another entry in the
+  looks-like-success family.
+- **When a known bug makes the obvious edit unsafe, write the correction into the
+  field that is safe and say why.** The honest fix for "5 local checkouts" is to
+  retitle it "4". DD-020 makes that specific keystroke mint a phantom row, so the
+  count was corrected in the description with an explicit note that the title is
+  knowingly wrong and why. A silently-wrong title is a trap; a wrong title carrying
+  its own explanation is a documented workaround.
