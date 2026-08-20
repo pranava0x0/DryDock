@@ -1755,7 +1755,7 @@ scar-tissue commit) landed upstream. A plain `git pull --ff-only` fixes it, it i
 already covered by an open item, and touching other projects' checkouts remains
 outside this routine. Nothing was filed.
 
-### One existing item refreshed instead of a new one filed
+### Two existing items refreshed instead of a new one filed
 
 The NEW line pointed at p52 `3YnFTnd9BFBeWWlG24aju` — "5 local checkouts are
 behind upstream, all fast-forwardable" — whose description had gone stale since
@@ -1783,10 +1783,22 @@ run is a second confirmation of that asymmetry: the description-only PATCH
 followed by a sync produced `pulledNew: 0` and a before/after id set-diff of
 28 → 28, nothing added, nothing removed.
 
+The same staleness turned up in **p72 `1zaKLkronUXdwnsvl8zke`** — "Triage 3 new
+Dependabot PRs on DryDock (#32-#34)" — found while spot-checking this entry's own
+citations, not from any NEW line. The live open set is **#32, #34, #42**: still
+three PRs, but **#33 was superseded by #42** when Dependabot regrouped the
+dev-dependencies group (#42 carries eslint-config-next 15.5.22 → 15.5.23 and
+postcss, now also `@types/node` 26.1.2 → 26.2.0). That matters more than a count
+being off, because p72's closing line read *"merge order #32 -> #33 together
+(paired versions)"* — and #33 no longer exists. The DD-016 lockstep partner for
+#32 is now **#42**. Description refreshed, title left alone for the same DD-020
+reason.
+
 ### Sync
 
-Two passes, both clean. `pushedItems` **28**, `pulledNew` **0**,
-`pulledUpdated` **0** both times; the first returned in **4s**, which is worth
+Four passes, all clean. `pushedItems` **28**, `pulledNew` **0**,
+`pulledUpdated` **0** every time, and an id set-diff of 28 → 28 across each pair
+with no title, status or priority drift. The first returned in **4s**, which is worth
 recording against yesterday's 1039s and 895s wedges — the unbounded-`osascript`
 bug (p75 `ocY0120oTglmbSoJAXRMO`) is still unfixed, so today's speed is the
 absence of the trigger, not the absence of the bug. `mirror.status` is
@@ -1817,6 +1829,25 @@ class item and not worth a title edit for the reason above.
   `command not found: timeout` before this was noticed. Use `curl --max-time`,
   or `git -c http.lowSpeedLimit=... -c http.lowSpeedTime=...` for git over HTTP.
   Sibling of the BSD-`find`-has-no-`-newermt` note from 08-12.
+- **A `python3 -c "…"` one-liner in zsh executed the backticked text inside the
+  string it was writing.** Writing p72's refreshed description with double quotes
+  around the Python source meant zsh ran command substitution on every backticked
+  fragment *in the prose* first — and that description is a runbook full of
+  commands. It actually executed `npm run lint`, `npm ci --ignore-scripts` and
+  `npm rebuild better-sqlite3` against this checkout, then PATCHed their captured
+  stdout into the backlog row: ANSI escape codes, an interactive ESLint prompt,
+  and `added 412 packages, and audited 413`, with the real sentences spliced
+  around them. Checked and repaired: `git status` clean (`npm ci` does not touch
+  `package-lock.json`), 346 packages present, and better-sqlite3 loads in a *fresh*
+  `node` process — it falls back to its shipped `prebuilds/`, so the missing
+  `build/Release/*.node` that `--ignore-scripts` left behind is not fatal here.
+  The running dev server was unaffected. The row was rewritten from a quoted
+  heredoc (`<<'EOF'`) with the text passed to Python as a file argument, and
+  re-verified clean of escapes and npm output. **Never interpolate prose into a
+  double-quoted shell string — pass it as a file or a quoted heredoc.** The
+  damage was recoverable here only by luck; the same slip on a runbook containing
+  a destructive command would not have been.
+
 - **Dev servers cannot be started from an unattended session.** `preview_start`
   refuses outright ("nobody is present to approve the command"), so the launch
   config is unavailable to this scheduled task. It did not matter today because a
@@ -1833,6 +1864,16 @@ class item and not worth a title edit for the reason above.
   exactly right for surfacing change, and exactly blind to a filed description
   drifting away from it. When a NEW line lands on an existing class item, re-read
   that item's roster rather than only appending to it.
+- **Text that documents commands is executable text.** The p72 row is a runbook —
+  its value is that it spells out `npm ci --ignore-scripts` and the rest — and
+  putting that prose inside a double-quoted shell string handed those exact
+  commands to zsh. The failure is not "I forgot to escape something"; it is that
+  the *more useful* a stored instruction is, the more dangerous it is to move
+  around through a shell. Any content whose whole point is that it contains
+  commands must travel as a file or a quoted heredoc, never as an interpolated
+  argument. It also silently corrupted the data it was writing, so the wrong text
+  landed and the PATCH still reported success — another entry in the
+  looks-like-success family.
 - **When a known bug makes the obvious edit unsafe, write the correction into the
   field that is safe and say why.** The honest fix for "5 local checkouts" is to
   retitle it "4". DD-020 makes that specific keystroke mint a phantom row, so the
