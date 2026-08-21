@@ -1883,3 +1883,82 @@ class item and not worth a title edit for the reason above.
   count was corrected in the description with an explicit note that the title is
   knowingly wrong and why. A silently-wrong title is a trap; a wrong title carrying
   its own explanation is a documented workaround.
+
+## 2026-08-21 — thirteenth run
+
+**Fully quiet.** The NEW SINCE LAST RUN section was empty against 27 fingerprints
+— zero lines, not one. Nothing was filed, nothing was changed in the backlog. Per
+the routine's own rule, an empty NEW section is a valid, correct result and the
+full 27-item state below it is context rather than a worklist, so it was not
+re-derived by hand.
+
+```
+--- NEW SINCE LAST RUN ---
+
+--- FULL STATE (27 items) ---
+```
+
+Today's run saved **27** fingerprints; the 08-19 entry above cites **28**. One
+line therefore stopped matching somewhere between those two saves, and it is not
+visible anywhere in today's output: the script diffs only for *appearances*, so a
+condition that resolves leaves no trace except the total in the save line. It was
+not chased down — reconstructing it means re-deriving the full state by hand,
+which is precisely the work this routine exists to avoid — and it cannot be
+recovered later either, because `~/.drydock/sweep-state.txt` is overwritten in
+place with no prior copy kept. Note it is *not* Nuclear Deployment, whose
+`0 ahead / 2 behind` SYNC line is still present today, unchanged.
+
+### Apple Notes sync
+
+A dev server was already listening on 3000, so the routine's known inability to
+start one unattended (08-19's note) did not bite again.
+
+```
+pushedItems: 28   pulledNew: 0   pulledUpdated: 0
+mirror.status: "disabled"  (no tracker repo configured)
+```
+
+`mirror.status` read rather than assumed, per the routine. `disabled` is the
+configured state, not a failure — it is the subject of open item p65 "Configure
+the DryDock backlog GitHub mirror" and stays that way until the user sets a
+tracker repo.
+
+### Spot-checks on yesterday's two refreshed items
+
+08-19's lesson was that a stale roster inside an already-filed item is invisible
+to a diff-against-last-run — fingerprints track current state and are blind to a
+*description* drifting away from it. Both items refreshed yesterday were re-read
+against today's reality rather than assumed good:
+
+| Item | Roster as filed 08-19 | Today |
+|---|---|---|
+| p52 `3YnFTnd9BFBeWWlG24aju` | FERC Doc 14 behind, Settle 4, Robotics 3, Nuclear 2 | identical — all four still exact |
+| p72 `1zaKLkronUXdwnsvl8zke` | live set #32, #34, #42 (#33 → #42) | identical — `gh pr list` returns exactly those three |
+
+Both still accurate; nothing patched, so no exposure to DD-020. p52's title still
+reads "5 local checkouts" and is still knowingly wrong for the reason its own
+description gives.
+
+### Changed about the routine
+
+Nothing. Two consecutive quiet-ish days with no script change is the intended
+steady state; the temptation on an empty-NEW day is to go find work in the FULL
+STATE section, and not doing that is the routine working.
+
+### Lessons
+
+- **A shrinking fingerprint count is a signal the NEW section structurally cannot
+  carry.** The script diffs for *appearances* — a line that stops matching leaves
+  no trace anywhere in the output except the total in the section header. 28 → 27
+  with an empty NEW section means something silently resolved (good) or silently
+  stopped being detected (not good), and the two are indistinguishable from the
+  report alone. Printing a **GONE SINCE LAST RUN** section alongside NEW would
+  make resolutions visible at the cost of one more diff direction, and would have
+  answered today's open question for free. It has to be printed *at the time*,
+  too: the state file is overwritten in place with no prior copy, so the delta is
+  unrecoverable the moment the next run saves — the same shape as 08-18's "a
+  diff-against-last-run is spent by printing it".
+- **Verifying a citation is cheap; assuming it held for 48 hours is not.** Both
+  spot-checks above cost one `curl` and one `gh pr list` and both came back clean
+  — which is the outcome that makes the habit feel wasteful and is exactly why it
+  has to be unconditional. Yesterday the same two checks found two rotted rosters.
